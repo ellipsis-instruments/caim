@@ -1,0 +1,14 @@
+Package: caim
+Type: Package
+Title: CAIM Toolbox
+Version: 0.0.1
+Author: Roberts Grava
+Maintainer: Roberts Grava <roberts.grava@gmail.com>
+Description: Financial and quantitative tools and utilities
+License: Exclusively for authorized use by CAIM and clients
+Encoding: UTF-8
+LazyData: true
+Depends:
+	data.table
+	, fredr
+RoxygenNote: 7.1.0
