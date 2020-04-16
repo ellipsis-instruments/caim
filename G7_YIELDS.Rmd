@@ -1,0 +1,624 @@
+---
+title: "G7 Government Yields"
+output: html_notebook
+---
+
+### Initialize environment
+```{r}
+library(caim)
+caim::clr()
+```
+
+### Setup preferences
+```{r}
+# most important maturities
+maturities_a = c(.25, 2, 5, 10)
+# interesting maturities, level b
+maturities_b = c(.0833, 1, 30)
+# all other maturities will be level c
+
+# relative weightings for each maturity level
+# these will form a density function that will be normalised to sum to 1
+#   , so don't worry about that here
+MAT_A_WT = 1
+MAT_B_WT = .75
+MAT_C_WT = 0.15
+
+# set of maturities to use for lambda values
+lambda_maturities <- seq(0.5, 5, 0.5)
+
+```
+
+### Load G7 yield info
+```{r}
+g7_rates_info <- fread("../data/ratesinfo.csv")[
+  country %in% c("US", "CA", "DE", "FR", "IT", "UK", "JP") & class=="GOVT"
+  , .(country, class, maturity, id=bb_ticker)
+]
+
+g7_rates_data <- g7_rates_info[
+  fread("../data/ratesdata.csv")
+  , 
+  , on=.(id), nomatch=NULL 
+][
+  , .(country
+      , class
+      , maturity
+      , date=lubridate::as_date(date)
+      , year=lubridate::year(lubridate::as_date(date))
+      , month=lubridate::month(lubridate::as_date(date))
+      , yield=PX_LAST
+      )
+][
+  , .SD, key=.(country, class, maturity, date)
+]
+
+
+g7_curve_mats <- sort(unique(g7_rates_data$maturity))
+g7_curve_columns <- paste0("yield_", g7_curve_mats)
+
+g7_curves <- dcast(
+  g7_rates_data, country + class + date + year + month ~ maturity, value.var="yield"  
+)[
+  , .SD
+  , key=.(country, class, date)  
+]
+setnames(g7_curves, c(key(g7_curves), g7_curve_mats), c(key(g7_curves), g7_curve_columns))
+
+g7_curves[]
+```
+
+### Load G7 Money market data
+```{r}
+g7_mm_info <- data.table(
+  country=c("US", "CA", "DE", "FR", "IT", "UK", "JP", "DE", "FR", "IT")
+  , curncy=c("USD", "CAD", "EUR", "EUR", "EUR", "GBP", "JPY", "DEM", "FRF", "ITL")
+  , id=c("USD.FIX.1M", "CAD.FIX.1M", "EUR.FIX.1M", "EUR.FIX.1M", "EUR.FIX.1M"
+         , "GBP.FIX.1M", "JPY.FIX.1M", "DEM.FIX.1M", "FRF.FIX.1M", "ITL.FIX.1M")
+)
+# g7_mm_info <- fread("../data/mminfo.csv")[
+#   CURNCY %in% c("USD",  "EUR", "GBP", "JPY", "CAD")
+#   , .(curncy=CURNCY, id=FIX_1M)
+# ]
+g7_mm_data <- g7_mm_info[
+  fread("../data/mmdata.csv")
+  , 
+  , on=.(id), nomatch=NULL
+][
+  , .(country
+      , curncy
+      , date = lubridate::as_date(date)
+      , year=lubridate::year(lubridate::as_date(date))
+      , month=lubridate::month(lubridate::as_date(date))
+      , maturity = 0.8333
+      , yield = PX_LAST
+      )
+][
+  , .SD , key=.(country, curncy, date)
+]
+
+# stitch together pre- and post-EUR convergence data for DE, FR, IT
+eur_start_date <- min(g7_mm_data[country=="DE" & curncy=="EUR"]$date)
+# delete local observations where EUR data is available
+g7_mm_data <- g7_mm_data[!(curncy %in% c("DEM", "FRF", "ITL") & date >= eur_start_date)]
+# relabel pre-EUR local observations as EUR
+# may need to rethink this if we want to implement pre- and post-EUR currency data
+# - maybe label everything as DEM FRF ITL?
+g7_mm_data[curncy %in% c("DEM", "FRF", "ITL"), curncy := "EUR"] 
+
+g7_mm_data[]
+```
+
+### Create monthly data
+```{r}
+g7_curves_m <- g7_curves[
+  date %in% caim::month_end_dates(date)
+]
+
+g7_mm_data_m <- g7_mm_data[
+  date %in% caim::month_end_dates(date)
+]
+
+```
+
+### Add money market data to short end of government curves
+This is, admittedly, a big kludge, but should help when there are no government yields below
+2-year maturity, like early Canada, etc. Also, this may be a good way to average 3-month bills and 
+1-month deposits as a proxy for cash when doing Nelson-Siegel analyses.
+
+Assumption: We'll do LIBOR - 1/8 as a crude proxy for LIBID
+```{r}
+g7_curves_m[g7_mm_data_m, yield_0.0833 := i.yield - 0.125, on=.(country, year, month)][]
+```
+
+### Ensure there are at least 3 yield points
+```{r}
+# ensure there are at least 3 yield points
+g7_curves_m <- g7_curves_m[
+  g7_curves_m[ ,.(valid=(sum(!is.na(.SD)) >= 3)), by=.(country, class, date)]$valid
+][
+  # find first date that works for all countries
+  date >= max(g7_curves_m[,.(min_date=min(date)), by=.(country, class)]$min_date)
+]
+```
+
+### Calculate Nelson Siegel coefficients
+```{r}
+curve_data <- g7_curves_m
+curve_mats <- g7_curve_mats
+curve_columns <- g7_curve_columns
+
+curve_coefs <- list()
+curve_ids <- unique(curve_data[,.(country, class)])
+for (c in 1:nrow(curve_ids)) {
+  t_curve_data <- curve_data[country == curve_ids[c, country] & class == curve_ids[c, class]]
+  t_curve_dates <- sort(unique(t_curve_data$date))
+  t_curve_mats <- curve_mats #sort(unique(yield_info[curve_id==c]$maturity))
+  t_curve_mat_names <- curve_columns #as.character(t_curve_mats)
+  
+  t_curve_mat_wts <- rep(MAT_C_WT, length(t_curve_mats))
+  names(t_curve_mat_wts) <- t_curve_mat_names
+  t_curve_mat_wts[names(t_curve_mat_wts) %in% maturities_a] <- MAT_A_WT
+  t_curve_mat_wts[names(t_curve_mat_wts) %in% maturities_b] <- MAT_B_WT
+  t_curve_mat_wts <- t_curve_mat_wts / sum(t_curve_mat_wts)
+  
+  
+  t_res <- list()
+  for (i in 1:length(lambda_maturities)) {
+    mat <- lambda_maturities[i]
+    lambda <- caim::ns_mat2lambda(mat)
+    print(paste("calculating for curve:", c, curve_ids[c, country], curve_ids[c, class], "maturity:", mat, "lambda:", lambda))
+    t_res[[i]] <- list(
+      mat=mat
+      , lambda=lambda
+      , coefs=data.table(
+        country=curve_ids[c, country]
+        , class=curve_ids[c, class]
+        , date=t_curve_data[,date]
+        , t(apply(t_curve_data, 1, function(x) 
+          caim::ns_yields2coefs(t_curve_mats
+                                , as.numeric(x[t_curve_mat_names])
+                                , lambda=lambda
+                                , wts=t_curve_mat_wts)))
+        , lambda_mat=mat
+        )
+      )
+  }
+  
+  # calculate summaries
+  # 5 year halflife assuming 260 business days in a year
+  decay <- halflife2decay(5*260)
+  lambda_summary <- data.table(t(sapply(t_res, function(x) 
+    c(mat=x$mat, lambda=x$lambda, wss=mean(x$coefs$wss), wss_exp=mean_exp(x$coefs$wss, decay)))))
+
+  # choose best data
+  best_hist_fit <- which(lambda_summary$wss == min(lambda_summary$wss))
+  best_exp_fit <- which(lambda_summary$wss_exp == min(lambda_summary$wss_exp))
+  # take average of best fits, but tilt towards best_exp_fit
+  best_ix <- floor(mean(c(best_hist_fit, best_exp_fit))+ifelse(best_exp_fit > best_hist_fit, 0.5, 0))
+  best_hist_coefs <- t_res[[best_ix]]$coefs
+  # best_hist_coefs$curve_id <- c
+
+  #add data to curve_coefs
+  curve_coefs[[length(curve_coefs)+1]] <- best_hist_coefs
+}
+
+ns_coefs <- rbindlist(curve_coefs)[
+  , .(ns_beta0 = beta0
+      , ns_beta1 = beta1
+      , ns_beta2 = beta2
+      , ns_lambda = lambda
+      , ns_lambda_mat = lambda_mat
+      , ns_wss = wss
+      )
+  , key=.(country, class, date)
+]
+
+g7_curves_m <- g7_curves_m[ns_coefs]
+
+rm(list=setdiff(ls(), c("g7_curves", "g7_curves_m", "g7_rates_data", "g7_rates_info", "g7_curve_columns", "g7_curve_mats")))
+```
+
+### Yield calculations
+```{r}
+long_data <- melt(
+  g7_curves_m  
+  , c("country", "class", "date", "ns_beta0", "ns_beta1", "ns_beta2", "ns_lambda")
+  ,  patterns("yield_")
+  , value.name="yield_now"
+)[
+  , maturity := as.numeric(stringr::str_remove(variable, "yield_"))
+][
+  , .(country, class, date, ns_beta0, ns_beta1, ns_beta2, ns_lambda, maturity, yield_now)
+]
+
+# fill in missing yields with interpolated data
+# table with !is.na(yield)
+yields_valid <- long_data[!is.na(yield_now)][, c("mat", "yld") := .(maturity, yield_now)]
+# table mapping to <=
+yields_lo <- yields_valid[long_data, .(country, date, maturity, m_lo0=mat, y_lo0=yld), on=.(country, date, maturity), roll=T]
+# table mapping to >=
+yields_hi <- yields_valid[long_data, .(country, date, maturity, m_hi0=mat, y_hi0=yld), on=.(country, date, maturity), roll=-Inf]
+
+yields_lin <- yields_hi[
+  yields_lo
+  , .(
+    country
+    , date
+    , maturity
+    , yield_lin = ifelse(m_hi0 == m_lo0
+                         , y_hi0
+                         , y_lo0 + (maturity - m_lo0) * (y_hi0 - y_lo0) / (m_hi0 - m_lo0)
+                         )
+    , y_hi0
+    , y_lo0
+    , m_hi0
+    , m_lo0
+  )
+  , on=.(country, date, maturity)
+]
+
+long_data <- long_data[yields_lin, on=.(country, date, maturity)]
+
+long_data <- long_data[
+  , c("num_coups", "mod_dur") := .(
+    ifelse(maturity > 0.25, ifelse(country=="US", 2, 1), 0)
+    , maturity
+  )  
+][
+  maturity > 0.25
+  , mod_dur := round(caim::modified_duration(yield_lin / 100, yield_lin / 100, maturity, num_coups), 6)
+][
+  , .(
+    ns_beta0
+    , ns_beta1
+    , ns_beta2
+    , ns_lambda
+    , num_coups
+    , mod_dur #= round(caim::modified_duration(yield_now / 100, yield_now / 100, maturity, 1), 6)
+    , yield_now
+    , yield_lin
+    , y_hi0
+    , y_lo0
+    , m_hi0
+    , m_lo0
+    )
+  , key=.(country, class, maturity, date)
+][
+  , yield_prev := shift(yield_lin), by = .(country, class, maturity)
+][
+  , c("y_hi1", "y_lo1", "m_hi1", "m_lo1") := .(
+    yield_lin
+    , shift(yield_lin)
+    , maturity
+    , shift(maturity)
+  )
+  , by = .(country, class, date)
+][
+  , yield_sell_lin := (
+    y_lo1 + ((m_hi1 - 1/12) - m_lo1) * (y_hi1 - y_lo1) / (m_hi1 - m_lo1)
+  )
+][
+  , yield_buy_ns := round(caim::ns_coefs2yields(
+    mats = maturity
+    , beta0 = shift(ns_beta0)
+    , beta1 = shift(ns_beta1)
+    , beta2 = shift(ns_beta2)
+    , lambda = shift(ns_lambda)
+  )$y, 4)
+  , by = .(country, class, maturity)
+][
+  , yield_sell_ns := round(caim::ns_coefs2yields(
+    mats = maturity - 1/2
+    , beta0 = ns_beta0
+    , beta1 = ns_beta1
+    , beta2 = ns_beta2
+    , lambda = ns_lambda
+  )$y, 4)
+][
+  , coup_inc_lin := round(yield_prev / 1200, 6)
+][
+  , shift_inc := ifelse(maturity > 0.25, round((yield_lin - yield_prev) / 100 * -mod_dur, 6), 0)
+][
+  , tot_ret_shift := coup_inc_lin + shift_inc
+][
+  , dur_inc_lin := ifelse(
+    maturity > 0.25
+    , round(caim::bond_price(yield_sell_lin / 100, yield_prev / 100, maturity - 1/12, 1, 1) - 1, 6)
+    , 0
+    )
+][
+  , tot_ret_lin := coup_inc_lin + dur_inc_lin
+][
+  , coup_inc_ns := round(yield_buy_ns / 1200, 6)  
+][
+ , price_inc_ns := ifelse(
+   maturity > 0.25
+   , round(caim::bond_price(yield_sell_ns / 100, yield_buy_ns / 100, maturity - 1/12, 1, 1) - 1, 6)
+   , 0
+   )
+][
+  , tot_ret_ns := coup_inc_ns + price_inc_ns
+]
+
+long_data[country=="US"]
+
+wide_data <- dcast(
+  long_data
+  ,country + class + date + ns_beta0 + ns_beta1 + ns_beta2 + ns_lambda ~ maturity
+  , value.var = names(long_data)[!(names(long_data) %in% c("country", "class", "date", "ns_beta0", "ns_beta1", "ns_beta2", "ns_lambda", "maturity"))]
+
+  # , value.var = c("mod_dur", "yield_now", "yield_prev", "yield_buy_ns", "yield_sell_ns"
+  #                 , "coup_inc_lin", "dur_inc_lin", "coup_inc_ns", "price_inc_ns", "tot_ret_ns"
+  #                 )
+  )
+
+wide_data[]
+
+g7_return_data <- dcast(
+  long_data[maturity %in% c(0.0833, 1, 2, 3, 5, 7, 10)]
+  , country + class + date ~ maturity
+  , value.var = c("coup_inc_lin", "tot_ret_shift", "tot_ret_lin", "tot_ret_ns")
+)
+
+g7_return_data[]
+```
+
+### Get asset data
+```{r}
+g7_assets <- data.table(
+  id=c("US.GOVT.13", "US.GOVT.15", "US.GOVT.110"
+       , "CA.GOVT.13", "CA.GOVT.15", "CA.GOVT.110"
+       , "DE.GOVT.13", "DE.GOVT.15", "DE.GOVT.110"
+       , "FR.GOVT.13", "FR.GOVT.15", "FR.GOVT.110"
+       , "IT.GOVT.13", "IT.GOVT.15", "IT.GOVT.110"
+       , "UK.GOVT.13", "UK.GOVT.15", "UK.GOVT.110"
+       , "JP.GOVT.13", "JP.GOVT.15", "JP.GOVT.110"
+       )
+  , country=c(rep("US", 3), rep("CA", 3), rep("DE", 3), rep("FR", 3), rep("IT", 3)
+              , rep("UK", 3), rep("JP", 3))
+  , maturity=rep(c(13, 15, 110), 7)
+  , key=c("country", "maturity")
+)
+g7_asset_info <- fread("../data/assetinfo.csv")[suggname %in% g7_assets$id]
+
+g7_asset_info[]
+
+g7_asset_data <- g7_assets[
+  fread("../data/assetdata.csv")
+  , .(
+    country
+    , maturity
+    , id
+    , date = lubridate::as_date(date)
+    , year = lubridate::year(date)
+    , month = lubridate::month(date)
+    , index_nav=PX_LAST
+    )
+  , on=.(id), nomatch=NULL
+][
+  date %in% caim::month_end_dates(date)
+  , .SD
+  , key=.(country, maturity, date)
+][
+  , index_ret := round(index_nav / shift(index_nav) - 1, 6)
+  , by=.(country, maturity)
+]
+
+g7_asset_data[]
+```
+
+
+### Model Setup
+```{r}
+g7_models <- list(
+  list(name="x_g13_coup_bullet", maturity=13, features=c("coup_inc_lin_2"), unity_coefs=T)
+  , list(name="x_g13_coup_bullet", maturity=13, features=c("tot_ret_shift_2"), unity_coefs=T)
+  , list(name="x_g13_lin_bullet", maturity=13, features=c("tot_ret_lin_2"), unity_coefs=T)
+  , list(name="x_g13_ns_bullet", maturity=13, features=c("tot_ret_ns_2"), unity_coefs=T)
+  , list(name="x_g13_coup_n", maturity=13, features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3"), unity_coefs=T)
+  , list(name="x_g13_shift_n", maturity=13, features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3"), unity_coefs=T)
+  , list(name="x_g13_lin_n", maturity=13, features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3"), unity_coefs=T)
+  , list(name="x_g13_ns_n", maturity=13, features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3"), unity_coefs=T)
+  , list(name="x_g13_coup_ladder", maturity=13, features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3"), unity_coefs=F)
+  , list(name="x_g13_shift_ladder", maturity=13, features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3"), unity_coefs=F)
+  , list(name="x_g13_lin_ladder", maturity=13, features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3"), unity_coefs=F)
+  , list(name="x_g13_ns_ladder", maturity=13, features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3"), unity_coefs=F)
+
+  , list(name="x_g15_coup_bullet", maturity=15, features=c("coup_inc_lin_3"), unity_coefs=T)
+  , list(name="x_g15_coup_bullet", maturity=15, features=c("tot_ret_shift_3"), unity_coefs=T)
+  , list(name="x_g15_lin_bullet", maturity=15, features=c("tot_ret_lin_3"), unity_coefs=T)
+  , list(name="x_g15_ns_bullet", maturity=15, features=c("tot_ret_ns_3"), unity_coefs=T)
+  , list(name="x_g15_coup_n", maturity=15, features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3", "coup_inc_lin_5"), unity_coefs=T)
+  , list(name="x_g15_shift_n", maturity=15, features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3", "tot_ret_shift_5"), unity_coefs=T)
+  , list(name="x_g15_lin_n", maturity=15, features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3", "tot_ret_lin_5"), unity_coefs=T)
+  , list(name="x_g15_ns_n", maturity=15, features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3", "tot_ret_ns_5"), unity_coefs=T)
+  , list(name="x_g15_coup_ladder", maturity=15, features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3", "coup_inc_lin_5"), unity_coefs=F)
+  , list(name="x_g15_shift_ladder", maturity=15, features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3", "tot_ret_shift_5"), unity_coefs=F)
+  , list(name="x_g15_lin_ladder", maturity=15, features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3", "tot_ret_lin_5"), unity_coefs=F)
+  , list(name="x_g15_ns_ladder", maturity=15, features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3", "tot_ret_ns_5"), unity_coefs=F)
+  
+  , list(name="x_g110_coup_bullet", maturity=110, features=c("coup_inc_lin_5"), unity_coefs=T)
+  , list(name="x_g110_coup_bullet", maturity=110, features=c("tot_ret_shift_5"), unity_coefs=T)
+  , list(name="x_g110_lin_bullet", maturity=110, features=c("tot_ret_lin_5"), unity_coefs=T)
+  , list(name="x_g110_ns_bullet", maturity=110, features=c("tot_ret_ns_5"), unity_coefs=T)
+  , list(name="x_g110_coup_n", maturity=110, features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3", "coup_inc_lin_5", "coup_inc_lin_7", "coup_inc_lin_10"), unity_coefs=T)
+  , list(name="x_g110_shift_n", maturity=110, features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3", "tot_ret_shift_5", "tot_ret_shift_7", "tot_ret_shift_10"), unity_coefs=T)
+  , list(name="x_g110_lin_n", maturity=110, features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3", "tot_ret_lin_5", "tot_ret_lin_7", "tot_ret_lin_10"), unity_coefs=T)
+  , list(name="x_g110_ns_n", maturity=110, features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3", "tot_ret_ns_5", "tot_ret_ns_7", "tot_ret_ns_10"), unity_coefs=T)
+  , list(name="x_g110_coup_ladder", maturity=110, features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3", "coup_inc_lin_5", "coup_inc_lin_7", "coup_inc_lin_10"), unity_coefs=F)
+  , list(name="x_g110_shift_ladder", maturity=110, features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3", "tot_ret_shift_5", "tot_ret_shift_7", "tot_ret_shift_10"), unity_coefs=F)
+  , list(name="x_g110_lin_ladder", maturity=110, features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3", "tot_ret_lin_5", "tot_ret_lin_7", "tot_ret_lin_10"), unity_coefs=F)
+  , list(name="x_g110_ns_ladder", maturity=110, features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3", "tot_ret_ns_5", "tot_ret_ns_7", "tot_ret_ns_10"), unity_coefs=F)
+)
+
+g7_features <- sort(unique(rbindlist(lapply(g7_models, function(x) data.table(feature=x$features))))$feature)
+
+# g13_models[["x_g13_coup_bullet"]] <- list(features=c("coup_inc_lin_2"), unity_coefs=T)
+# g13_models[["x_g13_shift_bullet"]] <- list(features=c("tot_ret_shift_2"), unity_coefs=T)
+# g13_models[["x_g13_lin_bullet"]] <- list(features=c("tot_ret_lin_2"), unity_coefs=T)
+# g13_models[["x_g13_ns_bullet"]] <- list(features=c("tot_ret_ns_2"), unity_coefs=T)
+# 
+# g13_models[["x_g13_coup_n"]] <- list(features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3"), unity_coefs=T)
+# g13_models[["x_g13_shift_n"]] <- list(features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3"), unity_coefs=T)
+# g13_models[["x_g13_lin_n"]] <- list(features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3"), unity_coefs=T)
+# g13_models[["x_g13_ns_n"]] <- list(features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3"), unity_coefs=T)
+# 
+# g13_models[["x_g13_coup_ladder"]] <- list(features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3"), unity_coefs=F)
+# g13_models[["x_g13_shift_ladder"]] <- list(features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3"), unity_coefs=F)
+# g13_models[["x_g13_lin_ladder"]] <- list(features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3"), unity_coefs=F)
+# g13_models[["x_g13_ns_ladder"]] <- list(features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3"), unity_coefs=F)
+# 
+
+```
+
+### Model evaluation
+```{r}
+evaluate <- function(model, per_in_year=12, wts=NULL) {
+  y_hat <- model$X %*% model$coefs
+  residuals <- y_hat - model$y
+  return(
+    c(
+      R2 = cor(y_hat, model$y) ^ 2
+      , MSE = mean(residuals^2)
+      , RMSE = sqrt(mean(residuals^2))
+      , WMSE = ifelse(!is.null(wts), t(model$wts) %*% residuals^2, NA)
+      , WRMSE = ifelse(!is.null(wts), sqrt(t(model$wts) %*% residuals^2), NA)
+      , alpha = mean(residuals)
+      , te = sd(residuals)
+      , alpha_y = (1 + mean(residuals)) ^ per_in_year - 1
+      , te_y = sd(residuals) * sqrt(per_in_year)
+    )
+  )
+}
+
+# for every combination of country and maturity
+eval_list <- apply(g7_assets, 1, function(asset) {
+  y_data <- g7_asset_data[id==asset["id"]]
+  x_data <- g7_return_data[country==asset["country"]][
+    , c("year", "month") := .(
+      lubridate::year(date)
+      , lubridate::month(date)
+    )
+  ]
+  # print(paste(asset["country"], asset["maturity"], nrow(y_data), nrow(x_data)))
+  model_data <- y_data[
+    x_data
+    ,
+    , on=.(year, month), nomatch=NULL
+  ][
+    , !c(
+      "country", "i.country", "class", "maturity", "year", "month", "index_nav", "i.date"
+    )
+  ]
+
+  has_invalid <- rowSums(is.na(model_data[ , ..g7_features])) > 0
+  print(paste(asset["id"], "rows:", nrow(model_data), "invalid:", sum(has_invalid)))
+
+  model_data <- model_data[!has_invalid]
+  print(paste("clean rows:", nrow(model_data)))
+  
+  asset_models <- lapply(which(sapply(g7_models, function(x) x$maturity==as.numeric(asset["maturity"]))), function(x) g7_models[[x]])
+  
+  res <- lapply(asset_models, function (m) {
+    print(paste(asset["id"], m$name))
+    y <- model_data[ , index_ret]
+    X <- cbind(intercept=1, model_data[ , m$features, with=F])
+    
+    Aeq <- c(0, rep(1, ncol(X) - 1))
+    beq <- 1
+    lb <- c(caim::NEG_INF, rep(0, ncol(X) - 1))
+    wts <- caim::d_exp(caim::halflife2decay(12), nrow(X))
+
+    fixed_coefs <- NULL
+    if (m$unity_coefs)
+      fixed_coefs <- c(0, rep(1/length(m$features), length(m$features)))
+
+    lmq <- caim::lm_quad(y, X, Aeq=Aeq, beq=beq, lb=lb, wts=wts, fixed_coefs=fixed_coefs)
+    # # coefs <- round(lmq$coefs, 6)
+    # # print(paste(x, coefs))
+
+    # print(lmq$coefs)
+    # return(round(evaluate(lmq), 6))
+    
+    coefs <- round(lmq$coefs, 6)
+    
+    return(data.table(asset=asset["id"]
+           , model=m$name
+           , t(round(evaluate(lmq, wts=wts), 6))
+           , coefs=list(coefs)
+           , features=list(names(coefs))
+          ))
+    # return(list(name=m$name, coefs=round(lmq$coefs, 6), eval=round(evaluate(lmq), 6)))
+    # return(nrow(X))
+  })
+
+  # y <- model_data[ , index_ret]
+  # X <- cbind(intercept=1, model_data[ , model$features])
+
+  return(res)
+
+})
+# combine eval_list, which is a [[numassets]][[nummodels]] list
+eval <- rbindlist(lapply(eval_list, rbindlist))
+eval[]
+```
+
+### Detour: constrained linear least squares = quadratic programming
+```{r}
+t(sapply(names(g13_models), function(x) {
+  model <- g13_models[[x]]
+  y <- model_data[ , index_ret]
+  X <- cbind(intercept=1, model_data[ , model$features, with=F])
+
+  Aeq <- c(0, rep(1, ncol(X) - 1))
+  beq <- 1
+  lb <- c(caim::NEG_INF, rep(0, ncol(X) - 1))
+  wts <- caim::d_exp(caim::halflife2decay(12), nrow(X))
+  
+  fixed_coefs <- NULL
+  if (model$unity_coefs)
+    fixed_coefs <- c(0, rep(1/length(model$features), length(model$features)))
+
+  lmq <- caim::lm_quad(y, X, Aeq=Aeq, beq=beq, lb=lb, wts=wts, fixed_coefs=fixed_coefs)
+  # coefs <- round(lmq$coefs, 6)
+  # print(paste(x, coefs))
+  
+  print(lmq$coefs)
+  return(round(evaluate(lmq), 6))
+  # return(as.matrix(c(model=x, t(round(evaluate(lmq), 6)))))
+}))
+
+# model <- g13_models[["x_g13_coup_bullet"]]
+# 
+# y <- model_data[ , index_ret]
+# X <- cbind(intercept=1, g7_return_data[ , model$features, with=F])
+# Aeq <- c(0, rep(1, ncol(X) - 1))
+# beq <- 1
+# lb <- c(caim::NEG_INF, rep(0, ncol(X) - 1))
+# wts <- caim::d_exp(caim::halflife2decay(12), nrow(X))
+# 
+# lmq <- caim::lm_quad(y, X, Aeq=Aeq, beq=beq, lb=lb, wts=wts)
+# coefs <- round(lmq$coefs, 6)
+# print(coefs)
+
+# set.seed(1967)
+# N <- 100
+# x1 <- runif(N)
+# x2 <- runif(N)
+# wts <- caim::d_exp(caim::halflife2decay(12), N)
+# z <- seq(0, 1, length.out=N)
+# y <- z * x1 + (1-z) * x2
+# X <- cbind(x1, x2)
+# Aeq <- rep(1, ncol(X))
+# beq <- 1
+# lb <- rep(0, ncol(X))
+# 
+# coefs <- round(caim::lm_quad(y, X, Aeq=Aeq, beq=beq, lb=lb), 6)
+# print(coefs)
+# 
+# coefs <- round(caim::lm_quad(y, X, Aeq=Aeq, beq=beq, lb=lb, wts=wts), 6)
+# print(coefs)
+
+```
+

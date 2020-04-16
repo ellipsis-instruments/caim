@@ -4,7 +4,14 @@
 \alias{ns_coefs2yields}
 \title{Generates yield curve from Nelson-Siegel coefficients}
 \usage{
-ns_coefs2yields(coefs, mats = c(0.0833, seq(0.25, 30, 0.25)))
+ns_coefs2yields(
+  coefs = NULL,
+  mats = c(0.0833, seq(0.25, 30, 0.25)),
+  beta0 = NA,
+  beta1 = NA,
+  beta2 = NA,
+  lambda = NA
+)
 }
 \description{
 Generates yield curve from Nelson-Siegel coefficients

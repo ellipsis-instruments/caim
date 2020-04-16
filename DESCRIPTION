@@ -11,4 +11,7 @@ LazyData: true
 Depends:
 	data.table
 	, fredr
+	, lubridate
+	, quadprog
+	, quantmod
 RoxygenNote: 7.1.0

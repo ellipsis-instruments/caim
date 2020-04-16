@@ -27,13 +27,19 @@ ns_yields2coefs <- function(mats, yields, lambda = 0.7173239, wts = rep(1/length
 
 #' Generates yield curve from Nelson-Siegel coefficients
 #' @export
-ns_coefs2yields <- function(coefs, mats = c(.0833, seq(0.25, 30, 0.25))) {
+ns_coefs2yields <- function(coefs=NULL, mats = c(.0833, seq(0.25, 30, 0.25)), beta0=NA, beta1=NA, beta2=NA, lambda=NA) {
   x <- mats
-  y <- (coefs["beta0"]
-        + coefs["beta1"]*ns_beta1_loading(mats, coefs["lambda"])
-        + coefs["beta2"]*ns_beta2_loading(mats, coefs["lambda"])
+  if (!is.null(coefs)) {
+    beta0 <- ifelse(is.data.table(coefs), coefs$beta0, coefs["beta0"])
+    beta1 <- ifelse(is.data.table(coefs), coefs$beta1, coefs["beta1"])
+    beta2 <- ifelse(is.data.table(coefs), coefs$beta2, coefs["beta2"])
+    lambda <- ifelse(is.data.table(coefs), coefs$lambda, coefs["lambda"])
+  }
+  y <- (beta0
+        + beta1*ns_beta1_loading(mats, lambda)
+        + beta2*ns_beta2_loading(mats, lambda)
   )
-  return(cbind(x, y))
+  return(data.table(cbind(x, y)))
 }
 
 #' Calculates Nelson-Siegel lambda that maximizes beta2 loading at mat

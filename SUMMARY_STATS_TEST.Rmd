@@ -1,0 +1,108 @@
+---
+title: "Weighted Summary Statistics"
+output: html_notebook
+---
+
+```{r}
+caim.wtd_mean <- function(x, wts=NULL) {
+  xmat <- as.matrix(x)
+  N <- nrow(xmat)
+  if (is.null(wts))
+    wts <- rep(1/N, N)
+  else
+    # normalize weights to sum to 1
+    wts <- wts / sum(wts)
+  return(wts %*% xmat)
+}
+
+caim.wtd_variance <- function(x, wts=NULL, population=F) {
+  xmat <- as.matrix(x)
+  N <- nrow(xmat)
+
+  if (is.null(wts))
+    wts <- rep(1/N, N)
+  else
+    # normalize weights to sum to 1
+    wts <- wts / sum(wts)
+  
+  xhat <- caim.wtd_mean(xmat, wts)
+  
+  if (!population)
+    # adjust weights for sample variance
+    wts <- wts * N / (N - 1)
+  
+  return(wts %*% t(apply(xmat, 1, function(x) x - xhat)) ^ 2)
+}
+
+caim.wtd_sd <- function(x, wts=NULL, population=F) {
+  return(sqrt(caim.wtd_variance(x, wts, population)))
+}
+
+caim.wtd_cov <- function(x, y=NULL, wts=NULL, population=F) {
+  if (!is.null(y)) {
+    x <- cbind(as.matrix(x)[ , 1], y)
+    colnames(x) <- c("x", "y")
+  }
+  xmat <- as.matrix(x)
+  N <- nrow(xmat)
+  numX <- ncol(xmat)
+  xnames <- colnames(xmat)
+
+  if (is.null(wts))
+    # create vector of equal weights
+    wts <- rep(1/N, N)
+  else
+    # normalize given weights to sum to 1
+    wts <- wts / sum(wts)
+  
+  # calculate series means where wts are normalized to sum to 1
+  xhat <- caim.wtd_mean(xmat, wts)
+  
+  # adjust weights for sample variance if necessary
+  if (!population)
+    wts <- wts * N / (N - 1)
+  
+  # calculate (xi - xhat) deviations for each column
+  xdevs <- t(apply(xmat, 1, function(x) x - xhat))
+  
+  # calculate weighted covariance matrix via matrix multiplication
+  # sum(wi * (xi-xhat) * (yi-yhat)) = t(wts * xdevs) %*% xdevs
+  covmtx <- matrix(t(wts * xdevs) %*% xdevs, numX, numX, dimnames=list(xnames, xnames))
+  
+  if (is.null(y))
+    return(covmtx)
+  else
+    # the off-diagonal part of covmtx is the covariance between the two series
+    return(as.numeric(covmtx[0, 1]))
+
+}
+
+caim.wtd_cor <- function(x, y=NULL, wts=NULL, population=F) {
+  if (!is.null(y)) {
+    x <- cbind(as.matrix(x)[ , 1], y)
+    colnames(x) <- c("x", "y")
+  }
+  xmat <- as.matrix(x)
+  
+  cormtx <- cov2cor(caim.wtd_cov(xmat, wts=wts, population=population))
+  
+  if (is.null(y))
+    return(cormtx)
+  else
+    return(as.numeric(cormtx[0, 1]))
+}
+
+caim.cov2cor <- function(covmtx) {
+  return(cov2cor(covmtx))
+}
+
+caim.cor2cov <- function(cormtx, stdevs) {
+  return(diag(stdevs) %*% cormtx %*% diag(stdevs))
+}
+
+caim.cov2sd <- function(covmtx) {
+  return(sqrt(diag(covmtx)))
+}
+
+```
+

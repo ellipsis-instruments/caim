@@ -1,0 +1,45 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+caim::clr()
+
+tdt <- data.table(
+  country = rep("US", 10)
+  , date = c(rep(lubridate::as_date("2020-04-09"), 10), rep(lubridate::as_date("2020-04-10"), 10))
+  , maturity = rep(c(.0833, 0.25, 0.5, 0.75, 1, 2, 3, 5, 7, 10), 2)
+  , yield = c(0.25, 0.3, NA, NA, NA, 0.5, NA, 0.75, NA, 0.9
+              , 0.20, NA, NA, NA, 0.35, 0.4, NA, 0.6, NA, 0.8
+              )
+)
+
+# table with !is.na(yield)
+yields_valid <- tdt[!is.na(yield)][, c("mat", "yld") := .(maturity, yield)]
+# table mapping to <=
+yields_lo <- yields_valid[tdt, .(country, date, maturity, m_lo=mat, y_lo=yld), on=.(country, date, maturity), roll=T]
+# table mapping to >=
+yields_hi <- yields_valid[tdt, .(country, date, maturity, m_hi=mat, y_hi=yld), on=.(country, date, maturity), roll=-Inf]
+
+yields_lin <- yields_hi[
+  yields_lo
+  , .(
+    country
+    , date
+    , maturity
+    , yield_lin = ifelse(m_hi == m_lo
+                         , y_hi
+                         , y_lo + (maturity - m_lo) * (y_hi - y_lo) / (m_hi - m_lo)
+                         )
+    , y_hi
+    , y_lo
+    , m_hi
+    , m_lo
+  )
+  , on=.(country, date, maturity)
+]
+
+yields_lin[]
+```
+
