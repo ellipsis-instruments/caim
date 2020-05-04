@@ -1,0 +1,151 @@
+---
+title: "MIT VAR Example"
+output: html_notebook
+---
+
+From https://ocw.mit.edu/courses/mathematics/18-s096-topics-in-mathematics-with-applications-in-finance-fall-2013/case-studies/MIT18_S096F13_CaseStudy5.pdf
+
+### Load data
+```{r}
+getSymbols(c("UNRATE", "FEDFUNDS", "TB3MS", "CPIAUCSL", "M1SL", "GDPDEF", "GDP", "GPDI", "TWEXBMTH"), src="FRED")
+SP500 <- getSymbols("^GSPC", src="yahoo", auto.assign=F)
+```
+
+### 1.3 Ordinary and Partial Autocorrelations of Reduced Set
+```{r}
+# Consider focusing on 3 variables
+ymat0<-merge(UNRATE, FEDFUNDS, CPIAUCSL)
+ind.quarterly0<-1*(is.na(ymat0[,3])==FALSE)
+sum(ind.quarterly0)
+dim(ymat0)
+```
+
+```{r}
+ymat00<-ymat0[which(ind.quarterly0==1),]
+head(ymat00)
+```
+
+```{r}
+par(mfcol=c(3,1))
+plot(ymat00[,1],main=dimnames(ymat00)[[2]][1])
+plot(ymat00[,2],main=dimnames(ymat00)[[2]][2])
+plot(ymat00[,3],main=dimnames(ymat00)[[2]][3])
+```
+
+###
+```{r}
+ ymat00.0<-window(ymat00
+                  , start = as.Date("1960-01-01")
+                  , end = as.Date("2000-12-31"))
+dim(ymat00.0)
+head(ymat00.0)
+```
+
+```{r}
+acf(ymat00.0, lag.max=10)
+```
+
+```{r}
+acf(ymat00.0, type="partial", lag.max=10)
+```
+
+### 1.4 Vector Autoregressive (VAR) Model of Reduced Set
+```{r}
+ # The function VARselect() is from the package vars; see Pfaff(2008).
+# This function identifies the optimal VAR(p) order p.
+ymat00.0.VAR.const<-VARselect(ymat00.0, lag.max=12, type="const")
+# Print out the VAR order identified by different information criteria
+ymat00.0.VAR.const$selection
+```
+
+```{r}
+# Fit the VAR model corresponding to the Schwarz Criterion (SC) which is the BIC
+ymat00.0.VAR.const.0<-VAR(ymat00.0, p=ymat00.0.VAR.const$selection[3],type="const")
+options(show.signif.stars=FALSE)
+summary(ymat00.0.VAR.const.0)
+```
+
+### 1.5 Impulse Response Functions for a Fitted VAR(p) Model
+The impulse response function measure the impact of a unit innovation (impulse)
+in a given variable on all the dependent variables in the VAR model.
+```{r}
+plot(irf(ymat00.0.VAR.const.0, impulse="UNRATE"))
+
+# When unemployment rises:
+# the Federal Funds rate is projected to decline
+# (consistent with Federal Reserve Policy)
+#
+# the CPI decreases (lower employment results in less
+# pressure to increase consumer prices)
+```
+```{r}
+plot(irf(ymat00.0.VAR.const.0, impulse="FEDFUNDS"))
+
+# When the Fed Funds rate increases:
+#
+# The Unemployment rate tends to increase;
+# so reducing the Fed Funds rate would tend to reduce unemployment
+#
+# The CPI increases; increases in the Fed Funds rate are
+# associated with increase in CPI over future quarters
+```
+```{r}
+plot(irf(ymat00.0.VAR.const.0, impulse="CPIAUCSL"))
+```
+
+When the CPI increases
+
+The Federal Funds rate tends to increase over subsequent quarters.
+This is consistent with Federal Reserve policy of raising
+interest rates to control for inflation.
+
+### 1.6 Ordinary and Partial Autocorrelations of Differenced Series
+```{r}
+ymat000.0<-na.omit(diff(ymat00.0))
+acf(ymat000.0, lag.max=10)
+```
+
+```{r}
+acf(ymat000.0, type="partial", lag.max=10)
+```
+
+### 1.7 Vector Autoregressive (VAR) Model with Differenced Series
+```{r}
+# The function VARselect() is from the package vars; see Pfaff(2008).
+# This function identifies the optimal VAR(p) order p.
+ymat000.0.VAR.const<-VARselect(ymat000.0, lag.max=12, type="const")
+# Print out the VAR order identified by different information criteria
+ymat000.0.VAR.const$selection
+# Fit the VAR model corresponding to the Schwarz Criterion (SC) which is the BIC
+ymat000.0.VAR.const.0<-VAR(ymat000.0, p=ymat000.0.VAR.const$selection[3],type="const")
+options(show.signif.stars=FALSE)
+summary(ymat000.0.VAR.const.0)
+```
+
+### 1.8 Impulse Response Functions for VAR(p) Fit of Differenced Series
+```{r}
+plot(irf(ymat000.0.VAR.const.0, impulse="UNRATE"))
+```
+
+```{r}
+plot(irf(ymat000.0.VAR.const.0, impulse="FEDFUNDS"))
+```
+
+```{r}
+plot(irf(ymat000.0.VAR.const.0, impulse="CPIAUCSL"))
+```
+
+Interpreting the impulse response functions for the VAR model of the differenced series, we note:
+• When unemployment increases, the Fed Funds rate tends to decrease over
+subsequent quarters, consistent with Federal Reserve policies (i.e., stimulating economic growth and employment with lower interest rates).
+• When the Fed Funds rate increases, there is a modest increase in inflation
+(CPIA). This is consistent with the Fed raising rates to control inflation
+which tends to persist for several quarters (note the high 3-rd quarter lag
+partial autocorrelation in CPIAUCSL).
+• When inflation (CPIAUCSL) increases, unemployment tends to rise modestly, and the Fed Funds rate tends to increase.
+
+References
+Bernard Pfaff (2008). VAR, SVAR and SVEC Models: Implementation With
+R Package vars, Journal of Statistical Software 27(4). URL http://www.jstatsoft.org/v27/i04/.
+Robert Litterman (1979). Techniques of Forecasting Using Vector Autoregressions. Working Paper # 115, Federal Reserve Bank of Minneapolis.
+Christopher Sims (1989). A Nine Variable Probabilistic Macroeconomic Forecasting Model. Discussion Paper 14, Federal Reserve Bank of Minneapolis.

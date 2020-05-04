@@ -9,3 +9,13 @@ k_fold_ix <- function(n, k=10, seed=NA) {
   return(data.table(k=rep_len(seq(1, k), n), ix=sample(n), key=c("k", "ix")))
 }
 
+#' Generates equally-cut index
+#' @export
+k_cut_ix <- function(n, k=10) {
+  hi <- round(seq(1, k) * (n / k))
+  lo <- c(0, hi[-length(hi)]) + 1
+  return (rbindlist(lapply(sapply(seq(1,k), function(x)
+    cbind(k=x, ix=seq(lo[x], hi[x]))), data.table)))
+}
+
+

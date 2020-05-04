@@ -12,7 +12,9 @@ wtd_mean <- function(x, wts=NULL) {
   else
     # normalize weights to sum to 1
     wts <- wts / sum(wts)
-  return(wts %*% xmat)
+  res <- as.numeric(wts %*% xmat)
+  names(res) <- colnames(xmat)
+  return(res)
 }
 
 #' Calculate weighted variance
@@ -25,6 +27,7 @@ wtd_mean <- function(x, wts=NULL) {
 wtd_variance <- function(x, wts=NULL, population=F) {
   xmat <- as.matrix(x)
   N <- nrow(xmat)
+  numX <- ncol(xmat)
 
   if (is.null(wts))
     wts <- rep(1/N, N)
@@ -38,7 +41,12 @@ wtd_variance <- function(x, wts=NULL, population=F) {
     # adjust weights for sample variance
     wts <- wts * N / (N - 1)
 
-  return(wts %*% t(apply(xmat, 1, function(x) x - xhat)) ^ 2)
+  if(numX == 1)
+    res <- as.numeric(wts %*% apply(xmat, 1, function(r) r - xhat) ^ 2)
+  else
+    res <- as.numeric(wts %*% t(apply(xmat, 1, function(r) r - xhat) ^ 2))
+  names(res) <- colnames(xmat)
+  return(res)
 }
 
 #' Calculate weighted standard deviation
@@ -62,10 +70,8 @@ wtd_sd <- function(x, wts=NULL, population=F) {
 #' @return covariance matrix if y == NULL, otherwise covariance between x and y.
 #' @export
 wtd_cov <- function(x, y=NULL, wts=NULL, population=F) {
-  if (!is.null(y)) {
-    x <- cbind(as.matrix(x)[ , 1], y)
-    colnames(x) <- c("x", "y")
-  }
+  if (!is.null(y))
+    x <- cbind(x=as.matrix(x)[ , 1], y)
   xmat <- as.matrix(x)
   N <- nrow(xmat)
   numX <- ncol(xmat)
@@ -96,7 +102,7 @@ wtd_cov <- function(x, y=NULL, wts=NULL, population=F) {
     return(covmtx)
   else
     # the off-diagonal part of covmtx is the covariance between the two series
-    return(as.numeric(covmtx[0, 1]))
+    return(as.numeric(covmtx[1, numX]))
 
 }
 
@@ -110,34 +116,54 @@ wtd_cov <- function(x, y=NULL, wts=NULL, population=F) {
 #' @return correlation matrix if y == NULL, otherwise correlation between x and y.
 #' @export
 wtd_cor <- function(x, y=NULL, wts=NULL, population=F) {
-  if (!is.null(y)) {
-    x <- cbind(as.matrix(x)[ , 1], y)
-    colnames(x) <- c("x", "y")
-  }
+  if (!is.null(y))
+    x <- cbind(x=as.matrix(x)[ , 1], y)
   xmat <- as.matrix(x)
+  numX <- ncol(xmat)
 
-  cormtx <- cov2cor(caim::wtd_cov(xmat, wts=wts, population=population))
+  cormtx <- caim::cov2cor(caim::wtd_cov(xmat, wts=wts, population=population))
 
   if (is.null(y))
     return(cormtx)
   else
-    return(as.numeric(cormtx[0, 1]))
+    return(as.numeric(cormtx[1, numX]))
 }
 
 #' Calculate correlation matrix from covariance matrix
 #' @export
 cov2cor <- function(covmtx) {
-  return(cov2cor(covmtx))
+  return(stats::cov2cor(covmtx))
 }
 
 #' Calculate covariance matrix from correlation matrix and vector of standard deviations
 #' @export
 cor2cov <- function(cormtx, stdevs) {
-  return(diag(stdevs) %*% cormtx %*% diag(stdevs))
+  cov <- diag(stdevs) %*% cormtx %*% diag(stdevs)
+  dimnames(cov) <- list(row.names(cor), colnames(cor))
+  return(cov)
 }
 
 #' Extract standard deviations from covariance matrix
 #' @export
 cov2sd <- function(covmtx) {
   return(sqrt(diag(covmtx)))
+}
+
+#' Frequency below a given alpha
+#' @export
+freq_below <- function(data, alpha=0) {
+  func <- function(dt,a) sum(dt<a)/length(dt)
+  return(func(data,alpha))
+}
+
+#' Empirical Value-at-Risk (VaR)
+#' @export
+var_emp <- function(data, confidence=0.95) {
+  return (quantile(data, 1 - confidence))
+}
+
+#' Empirical Conditional Value-at-Risk (CVaR)
+#' @export
+cvar_emp <- function(data, confidence=0.95) {
+  return(mean(data[data <= caim::var_emp(data,confidence)]))
 }

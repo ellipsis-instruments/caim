@@ -1,0 +1,35 @@
+---
+title: "Monte Carlo"
+output: html_notebook
+---
+
+```{r}
+N <- 1000
+K <- 3 # numassets
+assetnames <- c("CASH", "BONDS", "STOCKS")
+mu <- c(0.01, 0.03, 0.08); names(mu) <- assetnames
+sigma <- c(.01, .05, .15); names(sigma) <- assetnames
+cor <- rbind(
+  c(1, 0.9, 0.7)
+  , c(0.9, 1, 0.3)
+  , c(0.7, 0.3, 1)
+)
+dimnames(cor) <- list(assetnames, assetnames)
+
+cov <- caim::cor2cov(cor, sigma)
+
+set.seed(2020)
+z_indep <- matrix(rnorm(N * K), N, K, dimnames = list(1:N, assetnames))
+
+chol_cor <- chol(Matrix::nearPD(cor, corr=T)$mat)
+chol_cov <- chol(Matrix::nearPD(cov, corr=F)$mat)
+
+z_cor <- z_indep %*% chol_cor
+z_cov <- z_indep %*% chol_cov
+
+s_cor <- t(apply(z_cor, 1, function (x) mu + x * sigma))
+s_cov <- t(apply(z_cov, 1, function (x) mu + x))
+
+
+```
+

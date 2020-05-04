@@ -1,0 +1,98 @@
+---
+title: "Diebold Li Dynamic Nelson Siegel"
+output: html_notebook
+---
+
+See https://www.mathworks.com/help/econ/examples/using-the-kalman-filter-to-estimate-and-forecast-the-diebold-li-model.html
+
+```{r}
+caim::clr()
+library(caim)
+```
+
+```{r}
+hist_yields <- fread("../../data/FAMA_BLISS_FITTED.csv")
+maturities <- as.numeric(gsub("t", "", names(hist_yields)[3:length(hist_yields)]))
+yields <- as.matrix(hist_yields[ , 3:ncol(hist_yields)])
+
+lambda0 = 0.0609
+X <- data.table(yield_loading=1
+                , slope_loading=caim::ns_beta1_loading(maturities, lambda0)
+                , curve_loading=caim::ns_beta2_loading(maturities, lambda0)
+                )
+
+ols <- apply(yields, 1, function(y) {
+  xmat <- as.matrix(X)
+  lm(y ~ xmat - 1)
+})
+
+beta <- rbindlist(lapply(ols, function(x) data.table(t(x$coefficients))))
+residuals <- rbindlist(lapply(ols, function(x) data.table(t(x$residuals))))
+
+varm <- VAR(beta, 1, type="none")
+
+predict(varm)
+
+# from vars source code
+# n.ahead covariance matrices
+fecov <-
+function(x, n.ahead) {
+  n.par<-sapply(x$varresult, function(x) summary(x)$df[2])
+  sigma.u <- crossprod(resid(x))/n.par
+  Sigma.yh <- array(NA, dim = c(x$K, x$K, n.ahead))
+  Sigma.yh[, , 1] <- sigma.u
+  Phi <- Phi(x, nstep = n.ahead)
+  if (n.ahead > 1) {
+    for (i in 2:n.ahead) {
+      temp <- matrix(0, nrow = x$K, ncol = x$K)
+      for (j in 2:i) {
+        temp <- temp + Phi[, , j] %*% sigma.u %*% t(Phi[, , j])
+      }
+      Sigma.yh[, , i] <- temp + Sigma.yh[, , 1]
+    }
+  }
+  return(Sigma.yh)
+}
+
+```
+
+### Simulation
+```{r}
+SIM_PERIOD <- 12
+NUM_SIMS <- 1000
+
+varm_pred <- predict(varm, n.ahead=SIM_PERIOD)
+last_obs <- varm_pred$endog[nrow(varm_pred$endog), ]
+pred <- sapply(varm_pred$fcst, function(x) x[ , "fcst"])
+drift <- diff(rbind(last_obs, pred), 1)
+
+z_indep <- matrix(rnorm(NUM_SIMS * SIM_PERIOD * varm$K), NUM_SIMS * SIM_PERIOD, varm$K)
+z_dep <- z_indep %*% chol(summary(varm)$cov)
+sim_changes <- data.table(z_dep + matrix(t(drift), nrow(z_dep), ncol(z_dep), byrow=T))
+
+sim_change_paths <- cbind(
+  s = rep(1:NUM_SIMS, each=SIM_PERIOD)
+  , sim_changes
+)[
+  , cumsum(.SD), by=s
+][
+  , p := rep(1:SIM_PERIOD, NUM_SIMS)
+][
+  , .SD, key=.(s, p)
+]
+
+sim_paths <- data.table(t(apply(sim_change_paths[ , !c("s", "p")], 1, function(x) x + last_obs)))[
+  , c("s", "p") := .(
+    rep(1:NUM_SIMS, each=SIM_PERIOD)
+    , rep(1:SIM_PERIOD, NUM_SIMS)
+    )
+][
+  , .SD
+  , key=.(s, p)
+]
+
+sim_mean <- apply(sim_paths[p==12, !c("s", "p")], 2, mean)
+sim_sd <- apply(sim_paths[p==12, !c("s", "p")], 2, sd)
+sim_05 <- apply(sim_paths[p==12, !c("s", "p")], 2, quantile, probs=c(.05))
+```
+

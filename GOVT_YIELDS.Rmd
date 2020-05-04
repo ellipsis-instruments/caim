@@ -31,7 +31,7 @@ lambda_maturities <- seq(0.5, 5, 0.5)
 ### Load US yields
 ```{r}
 fredr::fredr_set_key(caim::API_KEY_FREDR)
-yield_info <- fread("../data/yield_info.csv")
+yield_info <- fread("../../data/yield_info.csv")
 yield_data <- rbindlist(lapply(yield_info$ticker, function(x) data.table(fredr::fredr(x, observation_start = as.Date("1920-01-01")))))
 
 setkeyv(yield_info, "ticker")
@@ -47,7 +47,9 @@ curve_data <- setorderv(
 curve_mat_names <- as.character(sort(unique(yield_info$maturity)))
 # remove rows when all maturity values are NA
 curve_data <- curve_data[apply(curve_data, 1, function(x) !(sum(!is.na(x[curve_mat_names]))==0))]
-colnames(curve_data)[colnames(curve_data) %in% curve_mat_names] <- paste0("yield_", curve_mat_names)
+
+
+# colnames(curve_data)[colnames(curve_data) %in% curve_mat_names] <- paste0("yield_", curve_mat_names)
 
 ```
 

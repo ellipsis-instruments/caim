@@ -27,17 +27,20 @@ MAT_C_WT = 0.15
 # set of maturities to use for lambda values
 lambda_maturities <- seq(0.5, 5, 0.5)
 
+# k for k-fold evaluation
+NUM_K_FOLDS = 10
+
 ```
 
 ### Load G7 yield info
 ```{r}
-g7_rates_info <- fread("../data/ratesinfo.csv")[
+g7_rates_info <- fread("../../data/ratesinfo.csv")[
   country %in% c("US", "CA", "DE", "FR", "IT", "UK", "JP") & class=="GOVT"
   , .(country, class, maturity, id=bb_ticker)
 ]
 
 g7_rates_data <- g7_rates_info[
-  fread("../data/ratesdata.csv")
+  fread("../../data/ratesdata.csv")
   , 
   , on=.(id), nomatch=NULL 
 ][
@@ -81,7 +84,7 @@ g7_mm_info <- data.table(
 #   , .(curncy=CURNCY, id=FIX_1M)
 # ]
 g7_mm_data <- g7_mm_info[
-  fread("../data/mmdata.csv")
+  fread("../../data/mmdata.csv")
   , 
   , on=.(id), nomatch=NULL
 ][
@@ -380,12 +383,12 @@ g7_assets <- data.table(
   , maturity=rep(c(13, 15, 110), 7)
   , key=c("country", "maturity")
 )
-g7_asset_info <- fread("../data/assetinfo.csv")[suggname %in% g7_assets$id]
+g7_asset_info <- fread("../../data/assetinfo.csv")[suggname %in% g7_assets$id]
 
 g7_asset_info[]
 
 g7_asset_data <- g7_assets[
-  fread("../data/assetdata.csv")
+  fread("../../data/assetdata.csv")
   , .(
     country
     , maturity
@@ -412,88 +415,119 @@ g7_asset_data[]
 ### Model Setup
 ```{r}
 g7_models <- list(
-  list(name="x_g13_coup_bullet", maturity=13, features=c("coup_inc_lin_2"), unity_coefs=T)
-  , list(name="x_g13_coup_bullet", maturity=13, features=c("tot_ret_shift_2"), unity_coefs=T)
-  , list(name="x_g13_lin_bullet", maturity=13, features=c("tot_ret_lin_2"), unity_coefs=T)
-  , list(name="x_g13_ns_bullet", maturity=13, features=c("tot_ret_ns_2"), unity_coefs=T)
-  , list(name="x_g13_coup_n", maturity=13, features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3"), unity_coefs=T)
-  , list(name="x_g13_shift_n", maturity=13, features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3"), unity_coefs=T)
-  , list(name="x_g13_lin_n", maturity=13, features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3"), unity_coefs=T)
-  , list(name="x_g13_ns_n", maturity=13, features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3"), unity_coefs=T)
-  , list(name="x_g13_coup_ladder", maturity=13, features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3"), unity_coefs=F)
-  , list(name="x_g13_shift_ladder", maturity=13, features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3"), unity_coefs=F)
-  , list(name="x_g13_lin_ladder", maturity=13, features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3"), unity_coefs=F)
-  , list(name="x_g13_ns_ladder", maturity=13, features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3"), unity_coefs=F)
+  list(name="x_g13_coup_bullet", type="coup_bullet", maturity=13
+       , features=c("coup_inc_lin_2"), unity_coefs=T)
+  , list(name="x_g13_shift_bullet", type="shift_bullet", maturity=13
+         , features=c("tot_ret_shift_2"), unity_coefs=T)
+  , list(name="x_g13_lin_bullet", type="lin_bullet", maturity=13
+         , features=c("tot_ret_lin_2"), unity_coefs=T)
+  , list(name="x_g13_ns_bullet", type="ns_bullet", maturity=13
+         , features=c("tot_ret_ns_2"), unity_coefs=T)
+  , list(name="x_g13_coup_n", type="coup_n", maturity=13
+         , features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3"), unity_coefs=T)
+  , list(name="x_g13_shift_n", type="shift_n", maturity=13
+         , features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3"), unity_coefs=T)
+  , list(name="x_g13_lin_n", type="lin_n", maturity=13
+         , features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3"), unity_coefs=T)
+  , list(name="x_g13_ns_n", type="ns_n", maturity=13
+         , features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3"), unity_coefs=T)
+  , list(name="x_g13_coup_ladder", type="coup_ladder", maturity=13
+         , features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3"), unity_coefs=F)
+  , list(name="x_g13_shift_ladder", type="shift_ladder", maturity=13
+         , features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3"), unity_coefs=F)
+  , list(name="x_g13_lin_ladder", type="lin_ladder", maturity=13
+         , features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3"), unity_coefs=F)
+  , list(name="x_g13_ns_ladder", type="ns_ladder", maturity=13
+         , features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3"), unity_coefs=F)
 
-  , list(name="x_g15_coup_bullet", maturity=15, features=c("coup_inc_lin_3"), unity_coefs=T)
-  , list(name="x_g15_coup_bullet", maturity=15, features=c("tot_ret_shift_3"), unity_coefs=T)
-  , list(name="x_g15_lin_bullet", maturity=15, features=c("tot_ret_lin_3"), unity_coefs=T)
-  , list(name="x_g15_ns_bullet", maturity=15, features=c("tot_ret_ns_3"), unity_coefs=T)
-  , list(name="x_g15_coup_n", maturity=15, features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3", "coup_inc_lin_5"), unity_coefs=T)
-  , list(name="x_g15_shift_n", maturity=15, features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3", "tot_ret_shift_5"), unity_coefs=T)
-  , list(name="x_g15_lin_n", maturity=15, features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3", "tot_ret_lin_5"), unity_coefs=T)
-  , list(name="x_g15_ns_n", maturity=15, features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3", "tot_ret_ns_5"), unity_coefs=T)
-  , list(name="x_g15_coup_ladder", maturity=15, features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3", "coup_inc_lin_5"), unity_coefs=F)
-  , list(name="x_g15_shift_ladder", maturity=15, features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3", "tot_ret_shift_5"), unity_coefs=F)
-  , list(name="x_g15_lin_ladder", maturity=15, features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3", "tot_ret_lin_5"), unity_coefs=F)
-  , list(name="x_g15_ns_ladder", maturity=15, features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3", "tot_ret_ns_5"), unity_coefs=F)
+  , list(name="x_g15_coup_bullet", type="coup_bullet", maturity=15
+         , features=c("coup_inc_lin_3"), unity_coefs=T)
+  , list(name="x_g15_shift_bullet", type="shift_bullet", maturity=15
+         , features=c("tot_ret_shift_3"), unity_coefs=T)
+  , list(name="x_g15_lin_bullet", type="lin_bullet", maturity=15
+         , features=c("tot_ret_lin_3"), unity_coefs=T)
+  , list(name="x_g15_ns_bullet", type="ns_bullet", maturity=15
+         , features=c("tot_ret_ns_3"), unity_coefs=T)
+  , list(name="x_g15_coup_n", type="coup_n", maturity=15
+         , features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3", "coup_inc_lin_5"), unity_coefs=T)
+  , list(name="x_g15_shift_n", type="shift_n", maturity=15
+         , features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3", "tot_ret_shift_5"), unity_coefs=T)
+  , list(name="x_g15_lin_n", type="lin_n", maturity=15
+         , features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3", "tot_ret_lin_5"), unity_coefs=T)
+  , list(name="x_g15_ns_n", type="ns_n", maturity=15
+         , features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3", "tot_ret_ns_5"), unity_coefs=T)
+  , list(name="x_g15_coup_ladder", type="coup_ladder", maturity=15
+         , features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3", "coup_inc_lin_5"), unity_coefs=F)
+  , list(name="x_g15_shift_ladder", type="shift_ladder", maturity=15
+         , features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3", "tot_ret_shift_5"), unity_coefs=F)
+  , list(name="x_g15_lin_ladder", type="lin_ladder", maturity=15
+         , features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3", "tot_ret_lin_5"), unity_coefs=F)
+  , list(name="x_g15_ns_ladder", type="ns_ladder", maturity=15
+         , features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3", "tot_ret_ns_5"), unity_coefs=F)
   
-  , list(name="x_g110_coup_bullet", maturity=110, features=c("coup_inc_lin_5"), unity_coefs=T)
-  , list(name="x_g110_coup_bullet", maturity=110, features=c("tot_ret_shift_5"), unity_coefs=T)
-  , list(name="x_g110_lin_bullet", maturity=110, features=c("tot_ret_lin_5"), unity_coefs=T)
-  , list(name="x_g110_ns_bullet", maturity=110, features=c("tot_ret_ns_5"), unity_coefs=T)
-  , list(name="x_g110_coup_n", maturity=110, features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3", "coup_inc_lin_5", "coup_inc_lin_7", "coup_inc_lin_10"), unity_coefs=T)
-  , list(name="x_g110_shift_n", maturity=110, features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3", "tot_ret_shift_5", "tot_ret_shift_7", "tot_ret_shift_10"), unity_coefs=T)
-  , list(name="x_g110_lin_n", maturity=110, features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3", "tot_ret_lin_5", "tot_ret_lin_7", "tot_ret_lin_10"), unity_coefs=T)
-  , list(name="x_g110_ns_n", maturity=110, features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3", "tot_ret_ns_5", "tot_ret_ns_7", "tot_ret_ns_10"), unity_coefs=T)
-  , list(name="x_g110_coup_ladder", maturity=110, features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3", "coup_inc_lin_5", "coup_inc_lin_7", "coup_inc_lin_10"), unity_coefs=F)
-  , list(name="x_g110_shift_ladder", maturity=110, features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3", "tot_ret_shift_5", "tot_ret_shift_7", "tot_ret_shift_10"), unity_coefs=F)
-  , list(name="x_g110_lin_ladder", maturity=110, features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3", "tot_ret_lin_5", "tot_ret_lin_7", "tot_ret_lin_10"), unity_coefs=F)
-  , list(name="x_g110_ns_ladder", maturity=110, features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3", "tot_ret_ns_5", "tot_ret_ns_7", "tot_ret_ns_10"), unity_coefs=F)
+  , list(name="x_g110_coup_bullet", type="coup_bullet", maturity=110
+         , features=c("coup_inc_lin_5"), unity_coefs=T)
+  , list(name="x_g110_shift_bullet", type="shift_bullet", maturity=110
+         , features=c("tot_ret_shift_5"), unity_coefs=T)
+  , list(name="x_g110_lin_bullet", type="lin_bullet", maturity=110
+         , features=c("tot_ret_lin_5"), unity_coefs=T)
+  , list(name="x_g110_ns_bullet", type="ns_bullet", maturity=110
+         , features=c("tot_ret_ns_5"), unity_coefs=T)
+  , list(name="x_g110_coup_n", type="coup_n", maturity=110
+         , features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3", "coup_inc_lin_5", "coup_inc_lin_7", "coup_inc_lin_10")
+         , unity_coefs=T)
+  , list(name="x_g110_shift_n", type="shift_n", maturity=110
+         , features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3", "tot_ret_shift_5", "tot_ret_shift_7", "tot_ret_shift_10")
+         , unity_coefs=T)
+  , list(name="x_g110_lin_n", type="lin_n", maturity=110
+         , features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3", "tot_ret_lin_5", "tot_ret_lin_7", "tot_ret_lin_10")
+         , unity_coefs=T)
+  , list(name="x_g110_ns_n", type="ns_n", maturity=110
+         , features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3", "tot_ret_ns_5", "tot_ret_ns_7", "tot_ret_ns_10")
+         , unity_coefs=T)
+  , list(name="x_g110_coup_ladder", type="coup_ladder", maturity=110
+         , features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3", "coup_inc_lin_5", "coup_inc_lin_7", "coup_inc_lin_10")
+         , unity_coefs=F)
+  , list(name="x_g110_shift_ladder", type="shift_ladder", maturity=110
+         , features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3", "tot_ret_shift_5", "tot_ret_shift_7", "tot_ret_shift_10")
+         , unity_coefs=F)
+  , list(name="x_g110_lin_ladder", type="lin_ladder", maturity=110
+         , features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3", "tot_ret_lin_5", "tot_ret_lin_7", "tot_ret_lin_10")
+         , unity_coefs=F)
+  , list(name="x_g110_ns_ladder", type="ns_ladder", maturity=110
+         , features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3", "tot_ret_ns_5", "tot_ret_ns_7", "tot_ret_ns_10")
+         , unity_coefs=F)
 )
 
 g7_features <- sort(unique(rbindlist(lapply(g7_models, function(x) data.table(feature=x$features))))$feature)
 
-# g13_models[["x_g13_coup_bullet"]] <- list(features=c("coup_inc_lin_2"), unity_coefs=T)
-# g13_models[["x_g13_shift_bullet"]] <- list(features=c("tot_ret_shift_2"), unity_coefs=T)
-# g13_models[["x_g13_lin_bullet"]] <- list(features=c("tot_ret_lin_2"), unity_coefs=T)
-# g13_models[["x_g13_ns_bullet"]] <- list(features=c("tot_ret_ns_2"), unity_coefs=T)
-# 
-# g13_models[["x_g13_coup_n"]] <- list(features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3"), unity_coefs=T)
-# g13_models[["x_g13_shift_n"]] <- list(features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3"), unity_coefs=T)
-# g13_models[["x_g13_lin_n"]] <- list(features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3"), unity_coefs=T)
-# g13_models[["x_g13_ns_n"]] <- list(features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3"), unity_coefs=T)
-# 
-# g13_models[["x_g13_coup_ladder"]] <- list(features=c("coup_inc_lin_1", "coup_inc_lin_2", "coup_inc_lin_3"), unity_coefs=F)
-# g13_models[["x_g13_shift_ladder"]] <- list(features=c("tot_ret_shift_1", "tot_ret_shift_2", "tot_ret_shift_3"), unity_coefs=F)
-# g13_models[["x_g13_lin_ladder"]] <- list(features=c("tot_ret_lin_1", "tot_ret_lin_2", "tot_ret_lin_3"), unity_coefs=F)
-# g13_models[["x_g13_ns_ladder"]] <- list(features=c("tot_ret_ns_1", "tot_ret_ns_2", "tot_ret_ns_3"), unity_coefs=F)
-# 
-
 ```
 
-### Model evaluation
+### Model evaluation - full history
 ```{r}
 evaluate <- function(model, per_in_year=12, wts=NULL) {
+  if (is.null(wts))
+    wts <- rep(1/length(model$y), length(model$y))
+  else
+    wts <- wts / sum(wts)
+  
   y_hat <- model$X %*% model$coefs
   residuals <- y_hat - model$y
   return(
     c(
-      R2 = cor(y_hat, model$y) ^ 2
-      , MSE = mean(residuals^2)
-      , RMSE = sqrt(mean(residuals^2))
-      , WMSE = ifelse(!is.null(wts), t(model$wts) %*% residuals^2, NA)
-      , WRMSE = ifelse(!is.null(wts), sqrt(t(model$wts) %*% residuals^2), NA)
-      , alpha = mean(residuals)
-      , te = sd(residuals)
-      , alpha_y = (1 + mean(residuals)) ^ per_in_year - 1
-      , te_y = sd(residuals) * sqrt(per_in_year)
+      R2 = caim::wtd_cor(y_hat, model$y, wts=wts) ^ 2
+      # , MSE = caim::wtd_mean(residuals^2, wts=wts) # caim::wtd_mean(residuals^2, wts=wts)
+      , RMSE = sqrt(caim::wtd_mean(residuals^2, wts=wts))
+      # , alpha = mean(residuals) # caim::wtd_mean(residuals, wts=wts)
+      # , te = sd(residuals) # caim::wtd_sd(residuals, wts=wts)
+      , alpha_y = (1 + caim::wtd_mean(residuals, wts=wts)) ^ per_in_year - 1
+      , te_y = caim::wtd_sd(residuals, wts=wts) * sqrt(per_in_year)
     )
   )
 }
 
 # for every combination of country and maturity
-eval_list <- apply(g7_assets, 1, function(asset) {
+hist_eval_list <- apply(g7_assets, 1, function(asset) {
   y_data <- g7_asset_data[id==asset["id"]]
   x_data <- g7_return_data[country==asset["country"]][
     , c("year", "month") := .(
@@ -518,7 +552,11 @@ eval_list <- apply(g7_assets, 1, function(asset) {
   model_data <- model_data[!has_invalid]
   print(paste("clean rows:", nrow(model_data)))
   
-  asset_models <- lapply(which(sapply(g7_models, function(x) x$maturity==as.numeric(asset["maturity"]))), function(x) g7_models[[x]])
+  asset_models <- lapply(which(sapply(g7_models
+                                      , function(x) x$maturity==as.numeric(asset["maturity"])))
+                         , function(x) {
+                           g7_models[[x]] 
+                         })
   
   res <- lapply(asset_models, function (m) {
     print(paste(asset["id"], m$name))
@@ -542,7 +580,7 @@ eval_list <- apply(g7_assets, 1, function(asset) {
     # return(round(evaluate(lmq), 6))
     
     coefs <- round(lmq$coefs, 6)
-    
+
     return(data.table(asset=asset["id"]
            , model=m$name
            , t(round(evaluate(lmq, wts=wts), 6))
@@ -559,12 +597,127 @@ eval_list <- apply(g7_assets, 1, function(asset) {
   return(res)
 
 })
+
 # combine eval_list, which is a [[numassets]][[nummodels]] list
-eval <- rbindlist(lapply(eval_list, rbindlist))
-eval[]
+hist_eval <- rbindlist(lapply(hist_eval_list, rbindlist))
+hist_eval[]
 ```
 
-### Detour: constrained linear least squares = quadratic programming
+### K-fold cross validation
+```{r}
+k_fold_eval <- rbindlist(apply(g7_assets, 1, function(asset) {
+  y_data <- g7_asset_data[id==asset["id"]]
+  x_data <- g7_return_data[country==asset["country"]][
+    , c("year", "month") := .(
+      lubridate::year(date)
+      , lubridate::month(date)
+    )
+  ]
+  # print(paste(asset["country"], asset["maturity"], nrow(y_data), nrow(x_data)))
+  model_data <- y_data[
+    x_data
+    ,
+    , on=.(year, month), nomatch=NULL
+  ][
+    , !c(
+      "country", "i.country", "class", "maturity", "year", "month", "index_nav", "i.date"
+    )
+  ]
+
+  has_invalid <- rowSums(is.na(model_data[ , ..g7_features])) > 0
+  # print(paste(asset["id"], "rows:", nrow(model_data), "invalid:", sum(has_invalid)))
+
+  model_data <- model_data[!has_invalid]
+  # print(paste("clean rows:", nrow(model_data)))
+  
+  k_ix <- caim::k_fold_ix(nrow(model_data), NUM_K_FOLDS)
+  
+  asset_models <- lapply(which(sapply(g7_models
+                                      , function(x) x$maturity==as.numeric(asset["maturity"])))
+                         , function(x) {
+                           g7_models[[x]] 
+                         })
+  
+  model_res <- lapply(asset_models, function (m) {
+    print(paste(asset["id"], m$name))
+    y <- model_data[ , index_ret]
+    X <- cbind(intercept=1, model_data[ , m$features, with=F])
+    
+    k_res <- sapply(seq(1, NUM_K_FOLDS), function(fold) {
+      train_ix <- k_ix[k != fold, ix]
+      test_ix <- k_ix[k == fold, ix]
+      
+      train_y <- y[train_ix]
+      train_X <- X[train_ix]
+
+      Aeq <- c(0, rep(1, ncol(train_X) - 1))
+      beq <- 1
+      lb <- c(caim::NEG_INF, rep(0, ncol(train_X) - 1))
+      wts <- caim::d_exp(caim::halflife2decay(12), nrow(train_X))
+  
+      fixed_coefs <- NULL
+      if (m$unity_coefs)
+        fixed_coefs <- c(0, rep(1/length(m$features), length(m$features)))
+      
+      lmq <- caim::lm_quad(train_y, train_X
+                           , Aeq=Aeq
+                           , beq=beq
+                           , lb=lb
+                           , wts=wts
+                           , fixed_coefs=fixed_coefs
+                           )
+      
+      test_y <- y[test_ix]
+      test_X <- X[test_ix]
+      
+      # print(test_X)
+      test_y_hat <- as.matrix(test_X) %*% lmq$coefs
+      residuals <- test_y_hat - test_y
+      R2 <- cor(test_y, test_y_hat) ^ 2
+      RMSE <- sqrt(mean(residuals^2))
+      alpha_y <- (1 + mean(residuals)) ^ 12 - 1
+      te_y <- sd(residuals) * sqrt(12)
+
+      return(round(c(k=fold, R2=R2, RMSE=RMSE, alpha_y=alpha_y, te_y=te_y), 6))
+
+    })
+    
+    return(data.table(asset=asset["id"], model=m$name, type=m$type, t(k_res)))
+
+  })
+
+  return(rbindlist(model_res))
+
+}))[
+  , .(
+    R2_mean = mean(R2)
+    , RMSE_mean = mean(RMSE)
+    , alpha_y_mean = mean(alpha_y)
+    , te_y_mean = mean(te_y)
+    , R2_sd = sd(R2)
+    , RMSE_sd = sd(RMSE)
+    , alpha_y_sd = sd(alpha_y)
+    , te_y_sd = sd(te_y)
+    , score = mean(RMSE) * sd(RMSE)
+  )
+  , by=.(asset, model, type)
+  ][
+    g7_assets, on=c(asset="id")
+  ][
+    , .SD
+    , key=.(country, maturity, score)
+  ]
+
+k_fold_best_models <- k_fold_eval[
+  , head(.SD, 3)
+  , by=.(country, maturity, asset)
+  ]
+
+best_model_freq <- sort(table(k_fold_best_models$type), decreasing=T)
+best_model_freq
+```
+
+### Old appendix: constrained linear least squares = quadratic programming
 ```{r}
 t(sapply(names(g13_models), function(x) {
   model <- g13_models[[x]]
@@ -588,37 +741,6 @@ t(sapply(names(g13_models), function(x) {
   return(round(evaluate(lmq), 6))
   # return(as.matrix(c(model=x, t(round(evaluate(lmq), 6)))))
 }))
-
-# model <- g13_models[["x_g13_coup_bullet"]]
-# 
-# y <- model_data[ , index_ret]
-# X <- cbind(intercept=1, g7_return_data[ , model$features, with=F])
-# Aeq <- c(0, rep(1, ncol(X) - 1))
-# beq <- 1
-# lb <- c(caim::NEG_INF, rep(0, ncol(X) - 1))
-# wts <- caim::d_exp(caim::halflife2decay(12), nrow(X))
-# 
-# lmq <- caim::lm_quad(y, X, Aeq=Aeq, beq=beq, lb=lb, wts=wts)
-# coefs <- round(lmq$coefs, 6)
-# print(coefs)
-
-# set.seed(1967)
-# N <- 100
-# x1 <- runif(N)
-# x2 <- runif(N)
-# wts <- caim::d_exp(caim::halflife2decay(12), N)
-# z <- seq(0, 1, length.out=N)
-# y <- z * x1 + (1-z) * x2
-# X <- cbind(x1, x2)
-# Aeq <- rep(1, ncol(X))
-# beq <- 1
-# lb <- rep(0, ncol(X))
-# 
-# coefs <- round(caim::lm_quad(y, X, Aeq=Aeq, beq=beq, lb=lb), 6)
-# print(coefs)
-# 
-# coefs <- round(caim::lm_quad(y, X, Aeq=Aeq, beq=beq, lb=lb, wts=wts), 6)
-# print(coefs)
 
 ```
 

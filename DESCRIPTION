@@ -1,9 +1,9 @@
 Package: caim
 Type: Package
-Title: CAIM Toolbox
-Version: 0.0.1
+Title: CAIM Quantitative Toolbox
+Version: 0.1.0
 Author: Roberts Grava
-Maintainer: Roberts Grava <roberts.grava@gmail.com>
+Maintainer: Roberts Grava <roberts.grava@caiml.com>
 Description: Financial and quantitative tools and utilities
 License: Exclusively for authorized use by CAIM and clients
 Encoding: UTF-8
@@ -12,6 +12,8 @@ Depends:
 	data.table
 	, fredr
 	, lubridate
+	, Matrix
 	, quadprog
 	, quantmod
+	, vars
 RoxygenNote: 7.1.0
