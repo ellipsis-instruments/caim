@@ -43,6 +43,19 @@ caim_colors <- function(color=NA, alpha=1) {
 
 }
 
+#' Heatmap color
+#' @export
+heatmap_color <- function(
+  x
+  , range = c(-1, 1)
+  , color_lo = caim::caim_colors("darkblue")
+  , color_mid = caim::caim_colors("white")
+  , color_hi = caim::caim_colors("darkred")
+) {
+  cr <- colorRamp(c(color_lo, color_mid, color_hi))
+  return(cr((x - range[1]) / (range[2] - range[1])))
+}
+
 #' format number to text
 #' @export
 #' @param num number or vector of numbers to format

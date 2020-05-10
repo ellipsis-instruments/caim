@@ -34,15 +34,15 @@ NUM_K_FOLDS = 10
 
 ### Load G7 yield info
 ```{r}
-g7_rates_info <- fread("../../data/ratesinfo.csv")[
+g7_rates_info <- fread("../../data/rates_info.csv")[
   country %in% c("US", "CA", "DE", "FR", "IT", "UK", "JP") & class=="GOVT"
-  , .(country, class, maturity, id=bb_ticker)
+  , .(country, class, maturity, bb_ticker)
 ]
 
 g7_rates_data <- g7_rates_info[
-  fread("../../data/ratesdata.csv")
+  fread("../../data/rates_data.csv")
   , 
-  , on=.(id), nomatch=NULL 
+  , on=.(bb_ticker), nomatch=NULL 
 ][
   , .(country
       , class

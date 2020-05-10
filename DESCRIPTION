@@ -1,7 +1,7 @@
 Package: caim
 Type: Package
 Title: CAIM Quantitative Toolbox
-Version: 0.1.2
+Version: 0.1.3
 Author: Roberts Grava
 Maintainer: Roberts Grava <roberts.grava@caiml.com>
 Description: Financial and quantitative tools and utilities
@@ -11,9 +11,11 @@ LazyData: true
 Depends:
 	data.table
 	, lubridate
+	, magrittr
 	, Matrix
 	, quadprog
 	, quantmod
+	, r2d3
 	, vars
 Suggests:
   Rblpapi
