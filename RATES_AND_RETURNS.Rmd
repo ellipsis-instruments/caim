@@ -1,0 +1,41 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+caim::clr()
+library(caim)
+library(data.table)
+```
+
+```{r}
+rates_info <- fread("../../bb_data/rates_info.csv")[
+  country %in% c("US", "CA", "DE", "FR", "IT", "UK", "JP") & class=="GOVT"
+  , .(country, class, maturity, bb_ticker)
+]
+
+rates_data <- rates_info[
+  fread("../../bb_data/bb_data.csv")
+  ,
+  , on=.(bb_ticker), nomatch=NULL
+][
+  field == "PX_LAST"
+][
+  , .(country
+      , class
+      , maturity
+      , date = lubridate::as_date(date)
+      # , year = lubridate::year(lubridate::as_date(date))
+      # , month = lubridate::month(lubridate::as_date(date))
+      , yield = value
+      )
+][
+  , .SD, key = .(country, class, maturity, date)
+]
+```
+
+```{r}
+
+```
+

@@ -2,10 +2,10 @@
 % Please edit documentation in R/date_functions.R
 \name{year_end_dates}
 \alias{year_end_dates}
-\title{Returns first date in each year for date series}
+\title{Returns last date in each year for date series}
 \usage{
 year_end_dates(dates)
 }
 \description{
-Returns first date in each year for date series
+Returns last date in each year for date series
 }

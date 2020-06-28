@@ -1,0 +1,69 @@
+---
+title: "clean up"
+output: html_notebook
+---
+
+```{r}
+caim::clr()
+library(caim)
+library(data.table)
+```
+
+
+```{r}
+# rates_info <- fread("../../data/rates_info_now.csv")[
+  # country %in% c("CA", "FR", "DE", "IT", "JP", "UK", "US", "EU", "CN", "AU")
+  # & class %in% c("GOVT", "CASH", "POLICY")
+  # & class2 %in% c("GOVT", "CASH", "POLICY", "ONSHORE CNY")
+# ][
+  # , .(country, class, maturity, bb_ticker)
+  # , key=.(country, maturity, class)
+# ]
+
+# fwrite(rates_info, "../../bb_data/rates_info.csv")
+```
+
+```{r}
+rates_info <- fread("../../bb_data/rates_info.csv")
+ice_info <- fread("../../bb_data/ice_info.csv")
+
+bb_data <- fread("../../bb_data/bb_data.csv")
+bb_data[ , date := lubridate::as_date(date)]
+bb_data[ , date_added := lubridate::as_datetime(date_added)]
+
+tickers <- sort(unique(c(
+  rates_info$bb_ticker
+  , ice_info$bb_ticker
+  )))
+
+bb_data_new <- rbindlist(lapply(tickers, function(x) {
+  
+  start_date <- ifelse(nrow(bb_data[ticker==x]) > 0
+                       , as.character(bb_data[ticker==x, max(date)] + 1)
+                       , "1970-12-31"
+  )
+  if (start_date < lubridate::today()) {
+    print(paste(x, start_date))
+    # download and return bloomberg data
+    caim::bdh(x, start_date=start_date)
+  } else {
+    print(paste(x, "up to date"))
+    # return empty list
+    list()
+  }
+
+}))
+
+key_fields <- c("ticker", "field", "date")
+setkeyv(bb_data, key_fields)
+setkeyv(bb_data_new, key_fields)
+bb_data_updated <- rbindlist(list(
+  bb_data
+  , bb_data_new[!bb_data]
+))
+setkeyv(bb_data_updated, key_fields)
+fwrite(bb_data_updated, "../../bb_data/bb_data.csv")
+
+
+```
+

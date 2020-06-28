@@ -34,13 +34,13 @@ NUM_K_FOLDS = 10
 
 ### Load G7 yield info
 ```{r}
-g7_rates_info <- fread("../../data/rates_info.csv")[
+g7_rates_info <- fread("../../data/rates_info_now.csv")[
   country %in% c("US", "CA", "DE", "FR", "IT", "UK", "JP") & class=="GOVT"
   , .(country, class, maturity, bb_ticker)
 ]
 
 g7_rates_data <- g7_rates_info[
-  fread("../../data/rates_data.csv")
+  fread("../../data/rates_data_now.csv")
   , 
   , on=.(bb_ticker), nomatch=NULL 
 ][
@@ -219,7 +219,7 @@ ns_coefs <- rbindlist(curve_coefs)[
 
 g7_curves_m <- g7_curves_m[ns_coefs]
 
-rm(list=setdiff(ls(), c("g7_curves", "g7_curves_m", "g7_rates_data", "g7_rates_info", "g7_curve_columns", "g7_curve_mats")))
+rm(list=setdiff(ls(), c("NUM_K_FOLDS", "g7_curves", "g7_curves_m", "g7_rates_data", "g7_rates_info", "g7_curve_columns", "g7_curve_mats")))
 ```
 
 ### Yield calculations
@@ -719,28 +719,28 @@ best_model_freq
 
 ### Old appendix: constrained linear least squares = quadratic programming
 ```{r}
-t(sapply(names(g13_models), function(x) {
-  model <- g13_models[[x]]
-  y <- model_data[ , index_ret]
-  X <- cbind(intercept=1, model_data[ , model$features, with=F])
-
-  Aeq <- c(0, rep(1, ncol(X) - 1))
-  beq <- 1
-  lb <- c(caim::NEG_INF, rep(0, ncol(X) - 1))
-  wts <- caim::d_exp(caim::halflife2decay(12), nrow(X))
-  
-  fixed_coefs <- NULL
-  if (model$unity_coefs)
-    fixed_coefs <- c(0, rep(1/length(model$features), length(model$features)))
-
-  lmq <- caim::lm_quad(y, X, Aeq=Aeq, beq=beq, lb=lb, wts=wts, fixed_coefs=fixed_coefs)
-  # coefs <- round(lmq$coefs, 6)
-  # print(paste(x, coefs))
-  
-  print(lmq$coefs)
-  return(round(evaluate(lmq), 6))
-  # return(as.matrix(c(model=x, t(round(evaluate(lmq), 6)))))
-}))
+# t(sapply(names(g13_models), function(x) {
+#   model <- g13_models[[x]]
+#   y <- model_data[ , index_ret]
+#   X <- cbind(intercept=1, model_data[ , model$features, with=F])
+# 
+#   Aeq <- c(0, rep(1, ncol(X) - 1))
+#   beq <- 1
+#   lb <- c(caim::NEG_INF, rep(0, ncol(X) - 1))
+#   wts <- caim::d_exp(caim::halflife2decay(12), nrow(X))
+#   
+#   fixed_coefs <- NULL
+#   if (model$unity_coefs)
+#     fixed_coefs <- c(0, rep(1/length(model$features), length(model$features)))
+# 
+#   lmq <- caim::lm_quad(y, X, Aeq=Aeq, beq=beq, lb=lb, wts=wts, fixed_coefs=fixed_coefs)
+#   # coefs <- round(lmq$coefs, 6)
+#   # print(paste(x, coefs))
+#   
+#   print(lmq$coefs)
+#   return(round(evaluate(lmq), 6))
+#   # return(as.matrix(c(model=x, t(round(evaluate(lmq), 6)))))
+# }))
 
 ```
 
