@@ -79,6 +79,8 @@ date_range <- function(data, keycols, datecol="date") {
   ]
 }
 
+#' Extracts month end series from long data.table
+#' @export
 monthly_data <- function(data, keycols, datecol = "date") {
   # ensure data is data.table
   data <- as.data.table(data)

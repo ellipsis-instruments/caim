@@ -8,7 +8,7 @@ caim::clr()
 library(caim)
 library(data.table)
 ```
-
+Download rates data
 ```{r}
 rates_info <- fread("../../bb_data/rates_info.csv")[
   country %in% c("US", "CA", "DE", "FR", "IT", "UK", "JP") & class=="GOVT"
@@ -33,9 +33,80 @@ rates_data <- rates_info[
 ][
   , .SD, key = .(country, class, maturity, date)
 ]
+
+rates_data_m <- caim::monthly_data(rates_data, c("country", "class", "maturity"))[
+  , .SD
+  , keyby = .(country, class, maturity, date)
+]
+rates_date_range <- caim::date_range(
+  rates_data_m[maturity %in% c(0.25, 2, 5, 10)],
+  c("country", "class", "maturity")
+)
+first_date <- max(rates_date_range$min_date)
+last_date <- min(rates_date_range$max_date)
+rates_data_m <- rates_data_m[
+  date >= first_date & date <= last_date
+]
+
+
 ```
 
+Linear interpolated yields
 ```{r}
+# ensure every country class and date has every available maturity
+# some/many observations will be NA
+a <- unique(data.table(rates_data_m[ , .(country, class, date)]))
+b <- unique(data.table(rates_data_m[ , .(class, maturity)]))
+matlist <- a[b, on=.(class), allow.cartesian=T]
+rates_data_m <- rates_data_m[
+  matlist
+  , on=.(country, class, maturity, date)
+][ 
+  , .SD , key=.(country, class, maturity, date)
+]
 
+# fill in missing yields with interpolated data
+# table with !is.na(yield)
+yields_valid <- rates_data_m[!is.na(yield)][, c("mat", "yld") := .(maturity, yield)]
+# table mapping to <=
+yields_lo <- yields_valid[rates_data_m, .(country, class, maturity, date, m_lo0=mat, y_lo0=yld), on=.(country, class, maturity, date), roll=T]
+# table mapping to >=
+yields_hi <- yields_valid[rates_data_m, .(country, class, maturity, date, m_hi0=mat, y_hi0=yld), on=.(country, class, maturity, date), roll=-Inf]
+
+yields_lin <- yields_hi[
+  yields_lo
+  , .(
+    country
+    , class
+    , maturity
+    , date
+    , yield_lin = ifelse(m_hi0 == m_lo0
+                         , y_hi0
+                         , y_lo0 + (maturity - m_lo0) * (y_hi0 - y_lo0) / (m_hi0 - m_lo0)
+                         )
+    , y_hi0
+    , y_lo0
+    , m_hi0
+    , m_lo0
+  )
+  , on=.(country, class, maturity, date)
+][
+#   # lop off "tails" of maturities
+#   # kludge until linear interp algo extends beyond min and max
+#   maturity >= 0.25 & maturity <= 30
+# ][
+  # include only key maturities
+  maturity %in% c(0.25, 1, 2, 3, 5, 7, 10, 30)
+][
+  , .(yield = yield_lin)
+  , key=.(country, class, maturity, date)
+]
+
+```
+
+Generate curves data
+```{r}
+curve_data <- dcast(rates_data_m, country + class + date ~ maturity, value.var="yield")
+curve_mats <- sort(unique(rates_data_m$maturity))
 ```
 

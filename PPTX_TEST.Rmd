@@ -1,0 +1,110 @@
+---
+title: "R PowerPoint Test with officer package"
+output: html_notebook
+---
+
+# Initialize environment
+```{r}
+caim::clr()
+library(caim)
+library(officer)
+library(rvg)
+# library(mschart)
+```
+
+# Create pptx document
+```{r}
+pptx <- officer::read_pptx("../../../~Templates/CAIM Template 200707.pptx")
+
+pptx <- officer::add_slide(pptx, layout="Title", master="Office Theme")
+pptx <- officer::ph_with(pptx, value="Hey this is my Slide Title", location=ph_location_label("Title"))
+pptx <- officer::ph_with(pptx, value="Guy America, CFA, CIO", location=ph_location_label("Subtitle"))
+
+pptx <- officer::add_slide(pptx, layout="Content", master="Office Theme")
+pptx <- officer::ph_with(pptx, value="Toto Analysis", location=ph_location_label("Title"))
+pptx <- officer::ph_with(pptx, value="Cheap Assets Suggest Longer Living", location=ph_location_label("Subtitle"))
+pptx <- officer::ph_with(pptx, value=c(
+  "Line One"
+  , "\t Line Two"
+), location=ph_location_label("Content"))
+
+pptx <- officer::add_slide(pptx, layout="Content", master="Office Theme")
+pptx <- officer::ph_with(pptx, value="Mah bullets", location=ph_location_label("Title"))
+pptx <- officer::ph_with(
+  pptx
+  , value=officer::unordered_list(
+    c("Level 1", "A", "B", "Level 2 is the place where i go", "yapers", "noop")
+    , level_list = c(1, 2, 2, 1, 2, 3)
+    )
+  , location=ph_location_label("Content")
+)
+```
+
+# D3 test
+```{r}
+library(r2d3)
+dml(r2d3(data=c(.3, .6, .8, .95, .4, .2), script="d3test.js"))
+```
+
+
+```{r}
+
+pptx <- officer::add_slide(pptx, layout="Two Content", master="Office Theme")
+pptx <- officer::ph_with(pptx, value="Equity Returns", location=ph_location_label("Title"))
+pptx <- officer::ph_with(pptx, value="Forward-Looking outcomes should differ from historic ones", location=ph_location_label("Subtitle"))
+pptx <- officer::ph_with(
+  pptx
+  , value=officer::unordered_list(
+    c("I got sumpin to say", "US tended to outperform others in the past", "But world should do catchy", "Level 2 is the place where i go", "yapers", "noop")
+    , level_list = c(1, 2, 2, 1, 2, 3)
+    )
+  , location=ph_location_label("Content L")
+)
+
+port_wts <- rbindlist(list(
+  data.table(name="BENCH", MXWD=1, SPX=0, MXWOU=0, MXEF=0)
+  , data.table(name="PORT", MXWD=0, SPX=0.48, MXWOU=0.41, MXEF=.11)
+))
+
+port_wts <- rbindlist(list(
+  data.table(name=character(), asset=character(), wt=numeric())
+  , data.table("BENCH", "MXWD", 1)
+  , data.table("PORT", "SPX", 0.48)
+  , data.table("PORT", "MXWOU", 0.41)
+  , data.table("PORT", "MXEF", 0.11)
+), use.names=F)
+
+plot_hist <- function(num=100) {
+  hist(rnorm(num))
+} 
+
+plot_d3 <- function() {
+  r2d3(data=c(.3, .6, .8, .95, .4, .2), script="d3test.js")
+}
+
+plot_hist()
+plot_d3()
+
+port_chart_l <- dml(plot_hist(50), fonts=list(sans="Arial"))
+port_chart_r <- dml(r2d3(data=c(.3, .6, .8, .95, .4, .2), script="d3test.js"))
+pptx <- officer::ph_with(
+  pptx
+  , port_chart_l
+  , location=ph_location_label("Content L")
+)
+
+pptx <- officer::ph_with(
+  pptx
+  , port_chart_r
+  , location=ph_location_label("Content R")
+)
+
+pptx <- officer::add_slide(pptx, layout="Disclaimer", master="Office Theme")
+
+pptx <- officer::add_slide(pptx, layout="End", master="Office Theme")
+
+print(pptx, target="test.pptx")
+
+# officer::layout_summary(pptx)
+```
+
