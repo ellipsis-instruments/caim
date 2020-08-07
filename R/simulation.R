@@ -1,3 +1,5 @@
+require(data.table)
+
 #' Bootstrap simulation "selection index"
 #' @export
 sim_ix <- function(num_obs, num_sims, block_size=1, prob=NULL, seed=NULL) {
@@ -48,5 +50,6 @@ sim_period_ix <- function(num_sims, num_periods, num_obs, block_size=1, prob=NUL
     , ix := sim_ix(num_obs, num_periods, block_size, prob, seed)
     , keyby = sim
   ]
+  setkeyv(simtable, c("sim", "per", "ix"))
   simtable
 }

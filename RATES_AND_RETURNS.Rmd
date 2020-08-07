@@ -3,23 +3,52 @@ title: "R Notebook"
 output: html_notebook
 ---
 
+# Clear rates data
 ```{r}
 caim::clr()
 library(caim)
 library(data.table)
 ```
-Download rates data
+
+# Set up Parameters
 ```{r}
-rates_info <- fread("../../bb_data/rates_info.csv")[
-  country %in% c("US", "CA", "DE", "FR", "IT", "UK", "JP") & class=="GOVT"
+CURVE_COUNTRIES <- c("US", "CA", "DE", "FR", "IT", "UK", "JP", "CN")
+CURVE_SECTORS <- c("GOVT")
+CURVE_MATURITIES <- c(0.25, 1, 2, 3, 5, 7, 10, 30)
+KEY_MATURITIES <- c(0.25, 1, 2, 5, 10, 30)
+
+NUM_SIMS <- 5000
+NUM_PERIODS_IN_SIM <- 12 # 12 = annual, etc.
+SIM_DECAY_FACTOR <- 1
+SIM_BLOCK_SIZE <- 3
+
+RATES_INFO_FILE <- "../../bb_data/rates_info.csv"
+TOT_RET_INFO_FILE <- "../../bb_data/tot_ret_info.csv"
+DATA_FILE <- "../../bb_data/bb_data.csv"
+
+YIELD_PATH_CHART_COUNTRY <- "US"
+YIELD_PATH_CHART_CLASS <- "GOVT"
+YIELD_PATH_CHART_MATURITY <- 2
+YIELD_PATH_CHART_NUM_SERIES <- 250
+```
+
+# Load rates data from data directory
+```{r}
+rates_info <- fread(RATES_INFO_FILE)[
+  country %in% CURVE_COUNTRIES & class %in% CURVE_SECTORS
   , .(country, class, maturity, bb_ticker)
 ]
 
-rates_data <- rates_info[
-  fread("../../bb_data/bb_data.csv")
+# extract daily rates data
+rates_data_d <- rates_info[
+  fread(DATA_FILE)
   ,
-  , on=.(bb_ticker), nomatch=NULL
+  # join on bb_ticker field
+  , on=.(bb_ticker)
+  # inner join
+  , nomatch=NULL
 ][
+  # filter on field
   field == "PX_LAST"
 ][
   , .(country
@@ -31,82 +60,569 @@ rates_data <- rates_info[
       , yield = value
       )
 ][
+  # set key and sort
   , .SD, key = .(country, class, maturity, date)
 ]
 
-rates_data_m <- caim::monthly_data(rates_data, c("country", "class", "maturity"))[
+# extract monthly rates data
+rates_data_m <- caim::monthly_data(rates_data_d, c("country", "class", "maturity"))[
   , .SD
   , keyby = .(country, class, maturity, date)
 ]
+
+# find valid dates
 rates_date_range <- caim::date_range(
-  rates_data_m[maturity %in% c(0.25, 2, 5, 10)],
+  rates_data_m[maturity %in% KEY_MATURITIES],
   c("country", "class", "maturity")
 )
+# find first date where all curves and key maturities have data
 first_date <- max(rates_date_range$min_date)
+
+# KLUDGE: the above needs reworking, ta accept 1 yr short end for China 
+first_date <- lubridate::as_date("2005-06-30")
+
+# find last date where all curves and key maturities have data
 last_date <- min(rates_date_range$max_date)
+# extract relevant date range
 rates_data_m <- rates_data_m[
   date >= first_date & date <= last_date
 ]
 
+rates_date_range[]
+rates_data_m[]
+```
+```{r}
+# fix tot_ret_data in bb_data
+# bb_data <- fread("../../bb_data/bb_data.csv")
+# tot_ret_tickers <- tot_ret_info$bb_ticker
+# bb_data[bb_ticker %in% tot_ret_tickers, date := as.character(lubridate::mdy(date))]
+# fwrite(bb_data, "../../bb_data/bb_data.csv")
+```
+
+#### Load total return asset data
+```{r}
+# read tot_ret_info file
+tot_ret_info <- fread(TOT_RET_INFO_FILE)
+
+# extract daily total return data
+tot_ret_data_d <- tot_ret_info[
+  fread(DATA_FILE)
+  ,
+  # join on bb_ticker field
+  , on=.(bb_ticker)
+  # inner join
+  , nomatch=NULL
+][
+  # filter on field
+  field == "PX_LAST"
+][
+  , .(
+    class
+    , name
+    , date
+    , value
+    , ltcma
+    , class_id
+    , asset_id
+  )
+]
+setkeyv(tot_ret_data_d, c("class_id", "asset_id", "date"))
+
+# extract monthly total return data
+tot_ret_data_m <- caim::monthly_data(tot_ret_data_d, c("class", "name"))
+setkeyv(tot_ret_data_m, c("class_id", "asset_id", "date"))
+# calculate historic monthly returns
+tot_ret_data_m[ , hist_return := value / shift(value), by=.(class_id, asset_id)]
+# detrend historic returns and add forward-looking return expectation
+tot_ret_data_m[!is.na(hist_return) , return := hist_return - as.numeric(caim::mean_exp(hist_return - 1, SIM_DECAY_FACTOR)), by=.(class_id, asset_id)]
+# + (ltcma / 12)
+
+tot_ret_stats_m <- tot_ret_data_m[
+  !is.na(return)
+  , .(
+    mean = mean(return - 1) * 12
+    , vol = sd(return - 1) * sqrt(12)
+    , freqless0 = caim::freq_below(return - 1, 0)
+    , var95 = caim::var_emp(return - 1, 0.95)
+    , cvar95 = caim::cvar_emp(return - 1, 0.95)
+  )
+  , by=.(class_id, asset_id)
+]
+
+tot_ret_data_m[]
+tot_ret_stats_m[]
+```
+
+
+#### Linear interpolated yields
+```{r}
+# find every combination of country, class, maturity and dte
+points_all <- data.table(expand.grid(
+  stringsAsFactors = F
+  , country = sort(unique(rates_data_m$country))
+  , class = sort(unique(rates_data_m$class))
+  , maturity = sort(unique(rates_data_m$maturity))
+  , date = lubridate::as_date(sort(unique(rates_data_m$date)))
+))
+setkeyv(points_all, c("country", "class", "maturity", "date"))
+points_all[]
+
+# find min and max maturities with valid data for each date for each curve
+maturity_range <- rates_data_m[ 
+  , .(
+    mat_min = min(maturity)
+    , mat_max = max(maturity)
+    )
+  , keyby=.(country, class, date)
+]
+
+# joins rates_data_m with points_all, will have NAs where there is no data;
+#   these will be filled in with interpolated data
+rates_data <- rates_data_m[points_all][maturity_range, on=.(country, class, date)]
+# linear interpolation. rule=2 will extend min and max values beyond valid maturity ranges
+rates_data[ , yield_approx := approx(x = maturity, y = yield, xout = maturity, rule = 2)$y, by=.(country, class, date)]
+# spline interpolation. useful because method = "natural" will linear extrapolate values outside valid maturity range
+rates_data[ , yield_spline := spline(x = maturity, y = yield, xout = maturity, method="natural")$y, by=.(country, class, date)]
+# use linear interpolated data - will keep these values for all observations within valid maturity range
+rates_data[ , yield_lin := yield_approx]
+# for extrapolated data, use average of constant min/max and linear extrapolation. this should moderate crazy extrapolated values
+rates_data[maturity < mat_min | maturity > mat_max, yield_lin := mean(c(yield_approx, yield_spline)), by=.(country, class, maturity, date)]
+
+rates_data[]
+```
+
+# filter to use preferred curve points
+```{r}
+curve_rates_data <- rates_data[maturity %in% CURVE_MATURITIES]
+# once we're happy with the calculation components of curve_rates_data, clean up columns
+curve_rates_data <- curve_rates_data[ , .(yield=yield_lin), key=.(country, class, date, maturity)]
+
+curve_rates_data[]
+```
+# calculate historic performance at curve points
+```{r}
+hist_rates_obs <- copy(curve_rates_data)
+# calculate duration for each curve point at each point in time. duration is time-varying, not constant, depending on yields
+hist_rates_obs[ , mod_dur := caim::modified_duration(yield / 100, yield / 100, maturity, ifelse(country=="US", 2, 1))]
+# calculate "buy yield" - previous month's yield at this maturity point
+hist_rates_obs[ , yield_buy := shift(yield), by=.(country, class, maturity)]
+# find interpolated "sell yields", with maturity = maturity - 1 month (we've held the security for a month)
+hist_rates_obs[ , yield_sell_approx := approx(x = maturity, y = yield, xout = maturity - 1/12, rule = 2)$y, by=.(country, class, date)]
+# use spline interpolation to get linear extrapolation outside maturity range
+hist_rates_obs[ , yield_sell_spline := spline(x = maturity, y = yield, xout = maturity - 1/12, method = "natural")$y, by=.(country, class, date)]
+# use linear interpolation values (only those within maturity range will be kept)
+hist_rates_obs[ , yield_sell := yield_sell_approx]
+# use average of min_yield and spline extrapolation for maturities outside valid maturity range
+mat_min <- min(hist_rates_obs$maturity)
+hist_rates_obs[(maturity - 1/12) < mat_min , yield_sell := mean(c(yield_sell_approx, yield_sell_spline)), by=.(country, class, maturity, date)]
+# if happy with yield_sell_approx, yield_sell_spline and yield_sell, clean up
+hist_rates_obs <- hist_rates_obs[ , !c("yield_sell_approx", "yield_sell_spline")]
+# coupon income = previous month's yield / 12
+hist_rates_obs[ , coup_inc := yield_buy / 1200]
+# price = par bond bought at previous month's yield, sold at this month's maturity - 1 month yield
+hist_rates_obs[ , price_inc := caim::bond_price(yield_sell / 100, yield_buy / 100, maturity - 1/12, ifelse(country=="US", 2, 1))/100]
+# total return: price income + coupon income
+hist_rates_obs[ , tot_ret := price_inc + coup_inc]
+
+hist_rates_obs[]
+```
+# simulations
+```{r}
+# add date index so sims can access it
+sim_rates_data <- copy(curve_rates_data)[ 
+  , date_ix := 0:(.N - 1)
+  , by=.(country, class, maturity)
+][
+  , .(yield)
+  , key=.(country, class, date_ix, date, maturity)
+]
+# previous yield for troubleshooting
+sim_rates_data[ , yield_prev := shift(yield), by=.(country, class, maturity)]
+# yield changes in bps
+sim_rates_data[ , yield_chg := yield - shift(yield), by=.(country, class, maturity)]
+# detrend historic yield changes
+sim_rates_data[!is.na(yield_chg) , yield_chg := yield_chg - as.numeric(caim::mean_exp(yield_chg, SIM_DECAY_FACTOR)), by=.(country, class, maturity)]
+# yield changes as pct of previous value
+sim_rates_data[ , yield_chg_pct := yield / shift(yield), by=.(country, class, maturity)]
+
+num_obs <- max(sim_rates_data$date_ix)
+sim_ix <- caim::sim_period_ix(NUM_SIMS, NUM_PERIODS_IN_SIM, num_obs, SIM_BLOCK_SIZE, caim::d_exp(SIM_DECAY_FACTOR, num_obs))
+
+print("constructing sim observations")
+print(system.time(sim_rates_obs <- rbindlist(list(
+  sim_rates_data[
+    date_ix==num_obs
+    , .(per=0, country, class, date_ix, date, maturity, yield_chg=yield)
+  ][
+    data.table(sim=1:NUM_SIMS, per=0)
+    , on=.(per), allow.cartesian=T
+  ]
+  , copy(sim_rates_data[
+    , .(yield_chg)
+    , key=.(country, class, date_ix, date, maturity)
+  ])[
+    sim_ix, on=.(date_ix=ix)
+    , allow.cartesian=T
+  ]
+), use.names=T)[
+  , .(sim, per, country, class, maturity, date_ix, date, yield_chg)
+]
+))
+print("setting key")
+print(system.time(
+  setkeyv(sim_rates_obs, c("sim", "country", "class", "maturity", "per"))
+))
+print("calculating yield path")
+print(system.time(
+  sim_rates_obs[ , yield := cumsum(yield_chg), by=.(country, class, sim, maturity)]
+))
+print("adjusting yields to minimum bounds")
+print(system.time(
+  sim_rates_obs[ , yield_adj := max(yield, -0.5), by=.(country, class, sim, per, maturity)]
+))
+print("calculating buy yields")
+print(system.time(
+  sim_rates_obs[ , yield_buy := shift(yield_adj), by=.(country, class, sim, maturity)]
+))
+print("calculating sell yields")
+print(system.time(
+# find interpolated "sell yields", with maturity = maturity - 1 month (we've held the security for a month)
+  sim_rates_obs[ , yield_sell := approx(x = maturity, y = yield_adj, xout = maturity - 1/12, rule = 2)$y, by=.(country, class, sim, per)]
+))
+print("calculating coupon income")
+print(system.time(
+  sim_rates_obs[ , coup_inc := yield_buy / 1200]
+))
+print("calculating price income")
+print(system.time(
+  sim_rates_obs[ , price_inc := caim::bond_price(yield_sell / 100, yield_buy / 100, maturity - 1/12, ifelse(country=="US", 2, 1))/100]
+))
+print("calculating total return")
+print(system.time({
+  sim_rates_obs[ , tot_ret := price_inc + coup_inc]
+  sim_rates_obs[is.na(tot_ret), tot_ret := 1.0]
+}))
+
+sim_rates_returns_ann <- sim_rates_obs[ , .(return = prod(tot_ret, na.rm=T) - 1), by=.(country, class, maturity, sim)]
+sim_rates_stats_ann <- sim_rates_returns_ann[ 
+  , .(
+    mean = mean(return)
+    , vol = sd(return)
+    , freqless0 = caim::freq_below(return, 0)
+    , var95 = caim::var_emp(return, 0.95)
+    , cvar95 = caim::cvar_emp(return, 0.95)
+  )
+  , by=.(country, class, maturity)
+]
+
+sim_rates_data[]
+sim_rates_obs[]
+sim_rates_stats_ann[]
+```
+#### Total return asset simulations
+```{r}
+# add date index so sims can access it
+sim_tot_ret_data <- copy(tot_ret_data_m)[ 
+  , date_ix := 0:(.N - 1)
+  , by=.(class_id, asset_id)
+][
+  , .(class, name, ltcma, return)
+  , key=.(class_id, asset_id, date_ix, date)
+]
+
+print("constructing sim observations")
+print(system.time(sim_tot_ret_obs <- copy(sim_tot_ret_data[
+    , .(class, name, ltcma, return)
+    , key=.(class_id, asset_id, date_ix, date)
+  ])[
+    sim_ix, on=.(date_ix=ix)
+    , allow.cartesian=T
+  ][
+  , .(sim, per, class_id, asset_id, class, name, ltcma, date_ix, date, return)
+]
+))
+print("setting key")
+print(system.time(
+  setkeyv(sim_tot_ret_obs, c("sim", "class_id", "asset_id", "per"))
+))
+
+# calculate expected volatilities (return expectations not added in yet)
+sim_tot_ret_returns_ann <- copy(sim_tot_ret_obs[ , .(return = prod(return, na.rm=T) - 1), by=.(class_id, asset_id, sim, class, name, ltcma)])
+# for volatile assets, simulations could have wild asymmetric outcomes and means might be significantly different than 0, so detrend
+sim_tot_ret_returns_ann <- sim_tot_ret_returns_ann[ , return := ltcma + return - mean(return), by=.(class_id, asset_id, class, name)]
+
+sim_tot_ret_stats_ann <- sim_tot_ret_returns_ann[ 
+  , .(
+    mean = mean(return)
+    , vol = sd(return)
+    , freqless0 = caim::freq_below(return, 0)
+    , var95 = caim::var_emp(return, 0.95)
+    , cvar95 = caim::cvar_emp(return, 0.95)
+  )
+  , by=.(class_id, asset_id)
+]
+
+sim_tot_ret_data[]
+sim_tot_ret_obs[]
+sim_tot_ret_returns_ann[]
+sim_tot_ret_stats_ann[]
 
 ```
 
-Linear interpolated yields
+
+#### Yield paths and returns
 ```{r}
-# ensure every country class and date has every available maturity
-# some/many observations will be NA
-a <- unique(data.table(rates_data_m[ , .(country, class, date)]))
-b <- unique(data.table(rates_data_m[ , .(class, maturity)]))
-matlist <- a[b, on=.(class), allow.cartesian=T]
-rates_data_m <- rates_data_m[
-  matlist
-  , on=.(country, class, maturity, date)
-][ 
-  , .SD , key=.(country, class, maturity, date)
-]
-
-# fill in missing yields with interpolated data
-# table with !is.na(yield)
-yields_valid <- rates_data_m[!is.na(yield)][, c("mat", "yld") := .(maturity, yield)]
-# table mapping to <=
-yields_lo <- yields_valid[rates_data_m, .(country, class, maturity, date, m_lo0=mat, y_lo0=yld), on=.(country, class, maturity, date), roll=T]
-# table mapping to >=
-yields_hi <- yields_valid[rates_data_m, .(country, class, maturity, date, m_hi0=mat, y_hi0=yld), on=.(country, class, maturity, date), roll=-Inf]
-
-yields_lin <- yields_hi[
-  yields_lo
-  , .(
-    country
-    , class
-    , maturity
-    , date
-    , yield_lin = ifelse(m_hi0 == m_lo0
-                         , y_hi0
-                         , y_lo0 + (maturity - m_lo0) * (y_hi0 - y_lo0) / (m_hi0 - m_lo0)
-                         )
-    , y_hi0
-    , y_lo0
-    , m_hi0
-    , m_lo0
+# yield paths
+yield_paths_x <- 0:NUM_PERIODS_IN_SIM
+yield_paths <- dcast(
+  sim_rates_obs[
+    country == YIELD_PATH_CHART_COUNTRY 
+      & class == YIELD_PATH_CHART_CLASS
+      & maturity == YIELD_PATH_CHART_MATURITY
+      & sim <= YIELD_PATH_CHART_NUM_SERIES
+    , .(
+      per
+      , sim
+      , yield_adj
+    )
+  ]
+  , per ~ sim, value.var = "yield_adj"
+)
+x <- yield_paths$per
+y <- yield_paths[ , !c("per")]
+plot(
+  range(x), range(y)
+  , type="n"
+  , bty="n"
+)
+abline(h=0)
+for (i in 1:YIELD_PATH_CHART_NUM_SERIES)
+  lines(
+    x, unlist(y[ , ..i])
+    , col=caim::caim_colors(i, 0.15)
+    , lwd=2
   )
-  , on=.(country, class, maturity, date)
-][
+
+# return paths
+return_paths <- dcast(
+  sim_rates_obs[
+    country == YIELD_PATH_CHART_COUNTRY 
+      & class == YIELD_PATH_CHART_CLASS
+      & maturity == YIELD_PATH_CHART_MATURITY
+      & sim <= YIELD_PATH_CHART_NUM_SERIES
+    , .(
+      per
+      , ret = cumprod(tot_ret) - 1
+    )
+    , by = .(country, class, sim, maturity)
+  ]
+  , per ~ sim, value.var = "ret"
+)
+x <- return_paths$per
+y <- return_paths[ , !c("per")]
+plot(
+  range(x), range(y)
+  , type="n"
+  , bty="n"
+)
+abline(h=0)
+for (i in 1:YIELD_PATH_CHART_NUM_SERIES)
+  lines(
+    x, unlist(y[ , ..i])
+    , col=caim::caim_colors(i, 0.15)
+    , lwd=2
+  )
+
+# sim_rates_obs[
+#     country == YIELD_PATH_CHART_COUNTRY 
+#       & class == YIELD_PATH_CHART_CLASS
+#       & maturity == YIELD_PATH_CHART_MATURITY
+#       & sim <= YIELD_PATH_CHART_NUM_SERIES
+#       # & per > 0
+#     , .(
+#       per
+#       , ret = cumprod(tot_ret) - 1
+#     )
+#     , by = .(country, class, sim, maturity)
+#   ]
+```
+
+# ------------------------------------------------------------------------------
+# DEPRECATED
+# ------------------------------------------------------------------------------
+
+#### calculate yield changes
+```{r}
+# # yield changes in bps
+# rates_data[ , yield_chg := yield_lin - shift(yield_lin), by=.(country, class, maturity)]
+# # yield changes as pct of previous value
+# rates_data[ , yield_chg_pct := yield_lin / shift(yield_lin), by=.(country, class, maturity)]
+# 
+# rates_data[]
+```
+
+
+#### Linear interpolated yields
+```{r}
+# # ensure every country class and date has every available maturity
+# fis <- data.table(expand.grid(stringsAsFactors = F
+#   , country = unique(rates_data_m$country)
+#   , class = unique(rates_data_m$class)
+#   # , date = unique(rates_data_m$date)
+#   , maturity = unique(rates_data_m$maturity)
+# ))
+# setkeyv(fis, c("country", "class", "maturity"))
+# fis[]
+
+
+  
+# # some/many observations will be NA
+# a <- unique(data.table(rates_data_m[ , .(country, class, date)]))
+# b <- unique(data.table(rates_data_m[ , .(class, maturity)]))
+# matlist <- a[b, on=.(class), allow.cartesian=T]
+# rates_data_m <- rates_data_m[
+#   matlist
+#   , on=.(country, class, maturity, date)
+# ][ 
+#   , .SD , key=.(country, class, maturity, date)
+# ]
+
+# # fill in missing yields with interpolated data
+# # table with !is.na(yield)
+# yields_valid <- rates_data_m[!is.na(yield)][, c("mat", "yld") := .(maturity, yield)]
+
+# yields_valid[
+#   , c("mat_min", "mat_min_hi", "mat_max_lo", "mat_max") :=
+#     .(
+#       min(mat)
+#     , mat_min_hi = sort(mat)[2]
+#     , mat_max_lo = sort(mat)[length(sort(mat)) - 1]
+#     , mat_max = max(mat)
+#     )
+#   , by=.(country, class, date)
+# ]
+
+# yields_range <- yields_valid[ 
+#   , .(
+#     mat_min = min(mat)
+#     , mat_min_hi = sort(mat)[2]
+#     , mat_max_lo = sort(mat)[length(sort(mat)) - 1]
+#     , mat_max = max(mat)
+#     )
+#   , keyby=.(country, class, date)
+# ][
+#   yields_valid
+#   , yld_min := yld
+#   , on=.(country, class, mat_min=mat, date)
+# ][
+#   yields_valid
+#   , yld_min_hi := yld
+#   , on=.(country, class, mat_min_hi=mat, date)
+# ][
+#   yields_valid
+#   , yld_max_lo := yld
+#   , on=.(country, class, mat_max_lo=mat, date)
+# ][
+#   yields_valid
+#   , yld_max := yld
+#   , on=.(country, class, mat_max=mat, date)
+# ]
+
+# # table mapping to <=
+# yields_lo <- yields_valid[
+#   rates_data_m
+#   , .(country, class, maturity, date, m_lo=mat, y_lo=yld)
+#   , on=.(country, class, date, maturity)
+#   , roll=T
+# ]
+# [
+#   is.na(m_lo)
+# ][
+#   yields_range
+#   , c("m_lo", "y_lo") :=
+#     .(
+#       mat_min
+#       , yld_min
+#     )
+#   , on=.(country, class, date)
+# ]
+
+# # table mapping to >=
+# yields_hi <- yields_valid[
+#   rates_data_m
+#   , .(country, class, maturity, date, m_hi=mat, y_hi=yld)
+#   , on=.(country, class, date, maturity)
+#   , roll=-Inf
+# ]
+# [
+#   is.na(m_hi)
+# ][
+#   yields_range
+#   , c("m_hi", "y_hi") :=
+#     .(
+#       mat_max
+#       , yld_max
+#     )
+#   , on=.(country, class, date)
+# ]
+# 
+# yields_lin <- yields_hi[
+#   yields_lo
+#   , .(
+#     country
+#     , class
+#     , maturity
+#     , date
+#     # , yield_lin = ifelse(m_hi0 == m_lo0
+#                          # , y_hi0
+#                          # , y_lo0 + (maturity - m_lo0) * (y_hi0 - y_lo0) / (m_hi0 - m_lo0)
+#                          # )
+#     , m_lo
+#     , m_hi
+#     , y_lo
+#     , y_hi
+#   )
+#   , on=.(country, class, maturity, date)
+# ]
+
+# [
+#   is.na(m_lo)
+#   , c("m_lo", "y_lo", "m_hi") := 
+#     .(m_hi, y_hi, )
+# ][
+#   is.na(m_hi)
+#   , c("m_hi", "y_hi") := 
+#     .(m_lo, y_lo)
+# ]
+
+
+
+# [
 #   # lop off "tails" of maturities
 #   # kludge until linear interp algo extends beyond min and max
 #   maturity >= 0.25 & maturity <= 30
 # ][
-  # include only key maturities
-  maturity %in% c(0.25, 1, 2, 3, 5, 7, 10, 30)
-][
-  , .(yield = yield_lin)
-  , key=.(country, class, maturity, date)
-]
-
+#   # include only key maturities
+#   maturity %in% CURVE_MATURITIES
+# ][
+#   , .(yield = yield_lin)
+#   , key=.(country, class, maturity, date)
+# ][
+#   , ix := 1:.N
+#   , by=.(country, class, maturity)
+# ][
+#   , .SD
+#   , key=.(country, class, ix, maturity, date)
+# ]
+# 
+# yields_lin[]
 ```
 
-Generate curves data
+#### Generate curves data
 ```{r}
-curve_data <- dcast(rates_data_m, country + class + date ~ maturity, value.var="yield")
-curve_mats <- sort(unique(rates_data_m$maturity))
+# # curve_data <- dcast(rates_data_m, country + class + date ~ maturity, value.var="yield")
+# # curve_mats <- sort(unique(rates_data_m$maturity))
+# curve_data <- dcast(yields_lin, ix + date ~ country + class + maturity, value.var="yield")
+# curve_changes <- curve_data[ , lapply(.SD, function(x) x - shift(x)), .SDcols=!c("ix", "date")]
 ```
 

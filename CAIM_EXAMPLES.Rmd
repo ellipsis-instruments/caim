@@ -1,0 +1,46 @@
+---
+title: "CAIM Examples"
+output: html_notebook
+---
+
+### Examples of R techniques and conventions used in <b>caim</b> package
+
+#### Construct data.table by row
+#### and
+#### Lo and hi roll search for interpolation functions
+```{r}
+yields <- rbindlist(list(
+  data.table(country=character(), maturity=numeric(), yield=numeric())
+  , data.table("US", 0.25, .3)
+  , data.table("US", 1, .4)
+  , data.table("US", 2, .5)
+  , data.table("US", 3, NA)
+  , data.table("US", 4, NA)
+  , data.table("US", 5, 0.6)
+  , data.table("US", 7, NA)
+  , data.table("US", 10, 0.8)
+  , data.table("US", 20, NA)
+  , data.table("US", 30, NA)
+  , data.table("US", 40, 1)
+), use.names=F)[ , ix := 1:.N]
+yields_lo <- yields[!is.na(yield)][yields, .(country, ix, mat=i.maturity, mat_lo=maturity, yield_lo=yield), on=.(country, ix), roll=T]
+yields_hi <- yields[!is.na(yield)][yields, .(country, ix, mat=i.maturity, mat_hi=maturity, yield_hi=yield), on=.(country, ix), roll=-Inf]
+yields <- yields[yields_lo, on=.(country, ix)][yields_hi, on=.(country, ix, mat)][
+  , .(country, mat_lo, mat, mat_hi, yield_lo, yield, yield_hi)
+]
+yields[]
+```
+
+#### Cartesian join using expand.grid
+```{r}
+maturities <- data.table(expand.grid(
+  country = c("US", "EU", "JP")
+  , class = c("GOVT", "CORP")
+  , mat = c(0.25, 2, 5, 10)
+  
+  , stringsAsFactors = F
+))
+setkeyv(maturities, c("country", "class", "mat"))
+maturities[]
+```
+

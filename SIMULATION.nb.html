@@ -1751,85 +1751,38 @@ summary {
 <!-- rnb-text-begin -->
 <!-- rnb-text-end -->
 <!-- rnb-chunk-begin -->
-<!-- rnb-source-begin eyJkYXRhIjoiYGBgclxuc2ltX2l4IDwtIGZ1bmN0aW9uKG51bV9vYnMsIG51bV9zaW1zLCBibG9ja19zaXplPTEsIHByb2I9TlVMTCwgc2VlZD1OVUxMKSB7XG4gIGlmICghaXMubnVsbChzZWVkKSkgc2V0LnNlZWQoc2VlZClcbiAgc2ltaXggPC0gc2FtcGxlKG51bV9vYnMsIG51bV9zaW1zLCByZXBsYWNlPVQsIHByb2I9cHJvYilcbiAgaWYgKGJsb2NrX3NpemUgPiAxKSB7ICMgY29uZHVjdCBibG9jayBib290c3RyYXBcbiAgICAgIGMgPC0gMFxuICAgICAgZm9yIChpIGluIDE6bnVtX3NpbXMpIHtcbiAgICAgICAgaWYgKGMgPT0gMCkgeyAjIHN0YXJ0IG9mIGEgc2VyaWVzLCB1c2UgdGhlIGV4aXN0aW5nIHZhbHVlXG4gICAgICAgICAgaXggPC0gc2ltaXhbaV1cbiAgICAgICAgfSBlbHNlIHsgIyBpbmNyZW1lbnQgcHJldmlvdXMgdmFsdWVcbiAgICAgICAgICB2YWwgPC0gaXggKyBjXG4gICAgICAgICAgaWYgKHZhbCA+IG51bV9vYnMpIHsgIyBncmVhdGVyIHRoYW4gbWF4aW11bSB2YWx1ZSwgc3RhcnQgYSBuZXcgYmxvY2tcbiAgICAgICAgICAgIGl4IDwtIHNpbWl4W2ldXG4gICAgICAgICAgICBjIDwtIDBcbiAgICAgICAgICB9IGVsc2UgeyAjIHVwZGF0ZSBjdXJyZW50IG9ic2VydmF0aW9uXG4gICAgICAgICAgICBzaW1peFtpXSA8LSB2YWxcbiAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICAgICAgYyA8LSBjICsgMVxuICAgICAgICBpZiAoYyA+IGJsb2NrX3NpemUgLSAxKSB7ICMgaGF2ZSBoaXQgbWF4aW11bSBibG9ja3NpemUsIHN0YXJ0IGEgbmV3IGJsb2NrXG4gICAgICAgICAgYyA8LSAwXG4gICAgICAgIH1cbiAgICAgIH1cbiAgICBcbiAgICAgICMgIyBub3RlIGZvciBwb3N0ZXJpdHk6IHRoZSBmb3ItbG9vcCBhYm92ZSBpcyBtYXRlcmlhbGx5IGZhc3RlciBcbiAgICAgICMgIyB0aGFuIHRoZSB3aGlsZSBsb29wIGJlbG93XG4gICAgICAjIGkgPC0gMVxuICAgICAgIyB3aGlsZSAoaSA8PSBudW1fc2ltcykge1xuICAgICAgIyAgIHMgPC0gc2ltaXhbaV1cbiAgICAgICMgICBibG9jayA8LSBtaW4oYmxvY2tfc2l6ZSAtIDEsIG51bV9vYnMgLSBzKVxuICAgICAgIyAgIGl4IDwtIGk6bWluKG51bV9zaW1zLCBpICsgYmxvY2spXG4gICAgICAjICAgc2ltaXhbaXhdIDwtIHNlcShzLCBzICsgYmxvY2spWzE6bGVuZ3RoKGl4KV1cbiAgICAgICMgICBpIDwtIGkgKyBibG9jayArIDFcbiAgICAgICMgfVxuICB9XG4gIFxuICBzaW1peFxufVxuXG5zaW1fcGVyaW9kX2l4IDwtIGZ1bmN0aW9uKG51bV9zaW1zLCBudW1fcGVyaW9kcywgbnVtX29icywgYmxvY2tfc2l6ZT0xLCBwcm9iPU5VTEwsIHNlZWQ9TlVMTCkge1xuICBzaW10YWJsZSA8LSBkYXRhLnRhYmxlKGV4cGFuZC5ncmlkKFxuICAgIHNpbSA9IDE6bnVtX3NpbXNcbiAgICAsIHBlciA9IDE6bnVtX3BlcmlvZHNcbiAgKSlbXG4gICMgICAsIC5TRFxuICAjICAgLCBrZXlieSA9IHNpbVxuICAjIF1bXG4gICAgLCBpeCA6PSBzaW1faXgobnVtX29icywgbnVtX3BlcmlvZHMsIGJsb2NrX3NpemUsIHByb2IsIHNlZWQpXG4gICAgLCBrZXlieSA9IHNpbVxuICBdXG4gIHNpbXRhYmxlXG59XG5gYGAifQ== -->
-<pre class="r"><code>sim_ix &lt;- function(num_obs, num_sims, block_size=1, prob=NULL, seed=NULL) {
-  if (!is.null(seed)) set.seed(seed)
-  simix &lt;- sample(num_obs, num_sims, replace=T, prob=prob)
-  if (block_size &gt; 1) { # conduct block bootstrap
-      c &lt;- 0
-      for (i in 1:num_sims) {
-        if (c == 0) { # start of a series, use the existing value
-          ix &lt;- simix[i]
-        } else { # increment previous value
-          val &lt;- ix + c
-          if (val &gt; num_obs) { # greater than maximum value, start a new block
-            ix &lt;- simix[i]
-            c &lt;- 0
-          } else { # update current observation
-            simix[i] &lt;- val
-          }
-        }
-        c &lt;- c + 1
-        if (c &gt; block_size - 1) { # have hit maximum blocksize, start a new block
-          c &lt;- 0
-        }
-      }
-    
-      # # note for posterity: the for-loop above is materially faster 
-      # # than the while loop below
-      # i &lt;- 1
-      # while (i &lt;= num_sims) {
-      #   s &lt;- simix[i]
-      #   block &lt;- min(block_size - 1, num_obs - s)
-      #   ix &lt;- i:min(num_sims, i + block)
-      #   simix[ix] &lt;- seq(s, s + block)[1:length(ix)]
-      #   i &lt;- i + block + 1
-      # }
-  }
-  
-  simix
-}
-
-sim_period_ix &lt;- function(num_sims, num_periods, num_obs, block_size=1, prob=NULL, seed=NULL) {
-  simtable &lt;- data.table(expand.grid(
-    sim = 1:num_sims
-    , per = 1:num_periods
-  ))[
-  #   , .SD
-  #   , keyby = sim
-  # ][
-    , ix := sim_ix(num_obs, num_periods, block_size, prob, seed)
-    , keyby = sim
-  ]
-  simtable
-}</code></pre>
+<!-- rnb-source-begin eyJkYXRhIjoiYGBgclxuY2FpbTo6Y2xyKClcbmBgYCJ9 -->
+<pre class="r"><code>caim::clr()</code></pre>
+<!-- rnb-source-end -->
+<p> <!-- rnb-source-begin eyJkYXRhIjoiYGBgclxubGlicmFyeShjYWltKVxuYGBgIn0= --></p>
+<pre class="r"><code>library(caim)</code></pre>
 <!-- rnb-source-end -->
 <!-- rnb-chunk-end -->
 <!-- rnb-text-begin -->
 <!-- rnb-text-end -->
 <!-- rnb-chunk-begin -->
-<!-- rnb-source-begin eyJkYXRhIjoiYGBgclxubnVtX3NpbXMgPC0gMTAwMDBcbm51bV9vYnMgPC0gMTgwXG5udW1fcGVyaW9kcyA8LSAxMjBcbmJsb2NrX3NpemUgPC0gM1xucHJvYiA8LSBjYWltOjpkX2V4cCgwLjcsIG51bV9vYnMpXG5zeXN0ZW0udGltZShpeCA8LSBzaW1faXgobnVtX29icywgbnVtX3NpbXMsIGJsb2NrX3NpemUsIHByb2I9cHJvYikpXG5gYGAifQ== -->
+<!-- rnb-source-begin eyJkYXRhIjoiYGBgclxubnVtX3NpbXMgPC0gMTAwMDBcbm51bV9vYnMgPC0gMTgwXG5udW1fcGVyaW9kcyA8LSAxMjBcbmJsb2NrX3NpemUgPC0gM1xucHJvYiA8LSBjYWltOjpkX2V4cCgwLjcsIG51bV9vYnMpXG5zeXN0ZW0udGltZShpeCA8LSBjYWltOjpzaW1faXgobnVtX29icywgbnVtX3NpbXMsIGJsb2NrX3NpemUsIHByb2I9cHJvYikpXG5gYGAifQ== -->
 <pre class="r"><code>num_sims &lt;- 10000
 num_obs &lt;- 180
 num_periods &lt;- 120
 block_size &lt;- 3
 prob &lt;- caim::d_exp(0.7, num_obs)
-system.time(ix &lt;- sim_ix(num_obs, num_sims, block_size, prob=prob))</code></pre>
+system.time(ix &lt;- caim::sim_ix(num_obs, num_sims, block_size, prob=prob))</code></pre>
 <!-- rnb-source-end -->
-<!-- rnb-output-begin eyJkYXRhIjoiICAgdXNlciAgc3lzdGVtIGVsYXBzZWQgXG4gIDAuMDAyICAgMC4wMDEgICAwLjAwNCBcbiJ9 -->
+<!-- rnb-output-begin eyJkYXRhIjoiICAgdXNlciAgc3lzdGVtIGVsYXBzZWQgXG4gIDAuMDAzICAgMC4wMDAgICAwLjAwMyBcbiJ9 -->
 <pre><code>   user  system elapsed 
-  0.002   0.001   0.004 </code></pre>
+  0.003   0.000   0.003 </code></pre>
 <!-- rnb-output-end -->
-<!-- rnb-source-begin eyJkYXRhIjoiYGBgclxuc3lzdGVtLnRpbWUoc3BpeCA8LSBzaW1fcGVyaW9kX2l4KG51bV9zaW1zLCBudW1fcGVyaW9kcywgbnVtX29icywgYmxvY2tfc2l6ZSwgcHJvYikpXG5gYGAifQ== -->
-<pre class="r"><code>system.time(spix &lt;- sim_period_ix(num_sims, num_periods, num_obs, block_size, prob))</code></pre>
+<!-- rnb-source-begin eyJkYXRhIjoiYGBgclxuc3lzdGVtLnRpbWUoc3BpeCA8LSBjYWltOjpzaW1fcGVyaW9kX2l4KG51bV9zaW1zLCBudW1fcGVyaW9kcywgbnVtX29icywgYmxvY2tfc2l6ZSwgcHJvYikpXG5gYGAifQ== -->
+<pre class="r"><code>system.time(spix &lt;- caim::sim_period_ix(num_sims, num_periods, num_obs, block_size, prob))</code></pre>
 <!-- rnb-source-end -->
-<!-- rnb-output-begin eyJkYXRhIjoiICAgdXNlciAgc3lzdGVtIGVsYXBzZWQgXG4gIDIuMDYxICAgMC4xMTQgICAwLjUwNyBcbiJ9 -->
+<!-- rnb-output-begin eyJkYXRhIjoiICAgdXNlciAgc3lzdGVtIGVsYXBzZWQgXG4gIDIuMjMyICAgMC4xNDYgICAwLjcyMCBcbiJ9 -->
 <pre><code>   user  system elapsed 
-  2.061   0.114   0.507 </code></pre>
+  2.232   0.146   0.720 </code></pre>
 <!-- rnb-output-end -->
 <!-- rnb-chunk-end -->
 
-<div id="rmd-source-code">LS0tCnRpdGxlOiAiQm9vdHN0cmFwIFNpbXVsYXRpb24iCm91dHB1dDogaHRtbF9ub3RlYm9vawotLS0KYGBge3J9CnNpbV9peCA8LSBmdW5jdGlvbihudW1fb2JzLCBudW1fc2ltcywgYmxvY2tfc2l6ZT0xLCBwcm9iPU5VTEwsIHNlZWQ9TlVMTCkgewogIGlmICghaXMubnVsbChzZWVkKSkgc2V0LnNlZWQoc2VlZCkKICBzaW1peCA8LSBzYW1wbGUobnVtX29icywgbnVtX3NpbXMsIHJlcGxhY2U9VCwgcHJvYj1wcm9iKQogIGlmIChibG9ja19zaXplID4gMSkgeyAjIGNvbmR1Y3QgYmxvY2sgYm9vdHN0cmFwCiAgICAgIGMgPC0gMAogICAgICBmb3IgKGkgaW4gMTpudW1fc2ltcykgewogICAgICAgIGlmIChjID09IDApIHsgIyBzdGFydCBvZiBhIHNlcmllcywgdXNlIHRoZSBleGlzdGluZyB2YWx1ZQogICAgICAgICAgaXggPC0gc2ltaXhbaV0KICAgICAgICB9IGVsc2UgeyAjIGluY3JlbWVudCBwcmV2aW91cyB2YWx1ZQogICAgICAgICAgdmFsIDwtIGl4ICsgYwogICAgICAgICAgaWYgKHZhbCA+IG51bV9vYnMpIHsgIyBncmVhdGVyIHRoYW4gbWF4aW11bSB2YWx1ZSwgc3RhcnQgYSBuZXcgYmxvY2sKICAgICAgICAgICAgaXggPC0gc2ltaXhbaV0KICAgICAgICAgICAgYyA8LSAwCiAgICAgICAgICB9IGVsc2UgeyAjIHVwZGF0ZSBjdXJyZW50IG9ic2VydmF0aW9uCiAgICAgICAgICAgIHNpbWl4W2ldIDwtIHZhbAogICAgICAgICAgfQogICAgICAgIH0KICAgICAgICBjIDwtIGMgKyAxCiAgICAgICAgaWYgKGMgPiBibG9ja19zaXplIC0gMSkgeyAjIGhhdmUgaGl0IG1heGltdW0gYmxvY2tzaXplLCBzdGFydCBhIG5ldyBibG9jawogICAgICAgICAgYyA8LSAwCiAgICAgICAgfQogICAgICB9CiAgICAKICAgICAgIyAjIG5vdGUgZm9yIHBvc3Rlcml0eTogdGhlIGZvci1sb29wIGFib3ZlIGlzIG1hdGVyaWFsbHkgZmFzdGVyIAogICAgICAjICMgdGhhbiB0aGUgd2hpbGUgbG9vcCBiZWxvdwogICAgICAjIGkgPC0gMQogICAgICAjIHdoaWxlIChpIDw9IG51bV9zaW1zKSB7CiAgICAgICMgICBzIDwtIHNpbWl4W2ldCiAgICAgICMgICBibG9jayA8LSBtaW4oYmxvY2tfc2l6ZSAtIDEsIG51bV9vYnMgLSBzKQogICAgICAjICAgaXggPC0gaTptaW4obnVtX3NpbXMsIGkgKyBibG9jaykKICAgICAgIyAgIHNpbWl4W2l4XSA8LSBzZXEocywgcyArIGJsb2NrKVsxOmxlbmd0aChpeCldCiAgICAgICMgICBpIDwtIGkgKyBibG9jayArIDEKICAgICAgIyB9CiAgfQogIAogIHNpbWl4Cn0KCnNpbV9wZXJpb2RfaXggPC0gZnVuY3Rpb24obnVtX3NpbXMsIG51bV9wZXJpb2RzLCBudW1fb2JzLCBibG9ja19zaXplPTEsIHByb2I9TlVMTCwgc2VlZD1OVUxMKSB7CiAgc2ltdGFibGUgPC0gZGF0YS50YWJsZShleHBhbmQuZ3JpZCgKICAgIHNpbSA9IDE6bnVtX3NpbXMKICAgICwgcGVyID0gMTpudW1fcGVyaW9kcwogICkpWwogICAgLCBpeCA6PSBzaW1faXgobnVtX29icywgbnVtX3BlcmlvZHMsIGJsb2NrX3NpemUsIHByb2IsIHNlZWQpCiAgICAsIGtleWJ5ID0gc2ltCiAgXQogIHNpbXRhYmxlCn0KYGBgCgpgYGB7cn0KbnVtX3NpbXMgPC0gMTAwMDAKbnVtX29icyA8LSAxODAKbnVtX3BlcmlvZHMgPC0gMTIwCmJsb2NrX3NpemUgPC0gMwpwcm9iIDwtIGNhaW06OmRfZXhwKDAuNywgbnVtX29icykKc3lzdGVtLnRpbWUoaXggPC0gc2ltX2l4KG51bV9vYnMsIG51bV9zaW1zLCBibG9ja19zaXplLCBwcm9iPXByb2IpKQpzeXN0ZW0udGltZShzcGl4IDwtIHNpbV9wZXJpb2RfaXgobnVtX3NpbXMsIG51bV9wZXJpb2RzLCBudW1fb2JzLCBibG9ja19zaXplLCBwcm9iKSkKYGBgCg==</div>
+<div id="rmd-source-code">LS0tCnRpdGxlOiAiQm9vdHN0cmFwIFNpbXVsYXRpb24iCm91dHB1dDogaHRtbF9ub3RlYm9vawotLS0KCmBgYHtyfQpjYWltOjpjbHIoKQpsaWJyYXJ5KGNhaW0pCmBgYAoKYGBge3J9Cm51bV9zaW1zIDwtIDEwMDAwCm51bV9vYnMgPC0gMTgwCm51bV9wZXJpb2RzIDwtIDEyMApibG9ja19zaXplIDwtIDMKcHJvYiA8LSBjYWltOjpkX2V4cCgwLjcsIG51bV9vYnMpCnN5c3RlbS50aW1lKGl4IDwtIGNhaW06OnNpbV9peChudW1fb2JzLCBudW1fc2ltcywgYmxvY2tfc2l6ZSwgcHJvYj1wcm9iKSkKc3lzdGVtLnRpbWUoc3BpeCA8LSBjYWltOjpzaW1fcGVyaW9kX2l4KG51bV9zaW1zLCBudW1fcGVyaW9kcywgbnVtX29icywgYmxvY2tfc2l6ZSwgcHJvYikpCmBgYAo=</div>
 
 
 

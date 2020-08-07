@@ -14,7 +14,75 @@ tdt <- data.table(
               , 0.20, NA, NA, NA, 0.35, 0.4, NA, 0.6, NA, 0.8
               )
 )
+```
 
+```{r}
+curve_lin <- function(xy, x=xy$x, expanded=F) {
+  
+  # filter - keep only valid xys
+  xy_valid <- xy[!is.na(y)][ , c("x_orig", "y_orig") := .(x, y)]
+
+  # set up xy_all
+  x_all <- data.table(x=sort(unique(c(xy$x, x))))
+  xy_all <- merge(xy, x_all, keyby="x", all=T)
+  
+  # extrapolation parameters for use later
+  nx <- nrow(xy_valid)
+  x_min <- xy_valid[1, x]
+  y_min <- xy_valid[1, y]
+  x_min_hi <- xy_valid[2, x]
+  y_min_hi <- xy_valid[2, y]
+  x_max <- xy_valid[nx, x]
+  y_max <- xy_valid[nx, y]
+  x_max_lo <- xy_valid[nx - 1, x]
+  y_max_lo <- xy_valid[nx - 1, y]
+  
+  # set up x_lo and x_hi
+  xy_lo <- xy_valid[xy_all, .(x, x_lo=x_orig, y_lo=y_orig), on=.(x), roll=T]
+  xy_hi <- xy_valid[xy_all, .(x, x_hi=x_orig, y_hi=y_orig), on=.(x), roll=-Inf]
+  
+  # merge xy_lo and xy_hi
+  xy_lin <- xy_hi[
+    xy_lo
+    , .(
+      x, x_lo, x_hi, y_lo, y_hi
+    )
+    , on=.(x)
+  ][
+    # set up extrapolation parameters for x < x_lo
+    is.na(x_lo)
+    , c("x_lo", "y_lo", "x_hi", "y_hi") :=
+      .(x_min, y_min, x_min_hi, y_min_hi)
+  ][
+    # set up extrapolation parameters for x > x_hi
+    is.na(x_hi)
+    , c("x_lo", "y_lo", "x_hi", "y_hi") :=
+      .(x_max_lo, y_max_lo, x_max, y_max)
+  ][
+    # linear interpolation
+    , y := ifelse(x_hi == x_lo, y_lo, y_lo + (x - x_lo) * (y_hi - y_lo) / (x_hi - x_lo))
+  ][
+    # moderate extrapolated values: average of extrapolated value and y_lo
+    x_lo > x
+    , y := mean(c(y, y_lo))
+    , by=.(x)
+  ][
+    # moderate extrapolated values: average of extrapolated value and y_hi
+    x_hi < x
+    , y := mean(c(y, y_hi))
+    , by=.(x)
+  ]
+
+  if (expanded)
+    data.table(x=sort(x))[xy_lin, on=.(x), nomatch=NULL][]
+  else
+    data.table(x=sort(x))[xy_lin, .(x, y), on=.(x), nomatch=NULL][]
+    
+}
+```
+
+
+```{r}
 # table with !is.na(yield)
 yields_valid <- tdt[!is.na(yield)][, c("mat", "yld") := .(maturity, yield)]
 # table mapping to <=

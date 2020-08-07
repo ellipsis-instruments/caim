@@ -1,19 +1,25 @@
 #' CAIM Color Palette
 #' @export
 caim_colors <- function(color=NA, alpha=1) {
-  colormtx <- matrix(c(36, 0, 132), nrow=1,
+  colormtx <- matrix(c(40, 38, 75), nrow=1,
                      dimnames=list("darkblue", c("r", "g", "b")))
-  colormtx <- rbind(colormtx, "darkred"=c(160, 0, 46))
-  colormtx <- rbind(colormtx, "ash"=c(156, 155, 155))
-  colormtx <- rbind(colormtx, "ashblue"=c(73, 98, 108))
-  colormtx <- rbind(colormtx, "sapphire"=c(42, 70, 108))
-  colormtx <- rbind(colormtx, "darkteal"=c(2, 52, 90))
-  colormtx <- rbind(colormtx, "darkblue2"=c(16, 9, 79))
-  colormtx <- rbind(colormtx, "darkred2"=c(97, 0, 28))
-  colormtx <- rbind(colormtx, "ash2"=c(94, 93, 93))
-  colormtx <- rbind(colormtx, "ashblue2"=c(44, 59, 64))
-  colormtx <- rbind(colormtx, "sapphire2"=c(20, 44, 107))
-  colormtx <- rbind(colormtx, "darkteal2"=c(0, 32, 53))
+  colormtx <- rbind(colormtx, "darkred"=c(209, 46, 40))
+  colormtx <- rbind(colormtx, "ash"=c(135, 135, 135))
+  colormtx <- rbind(colormtx, "ashblue"=c(84, 139, 233))
+  colormtx <- rbind(colormtx, "olivegreen"=c(176, 179, 104))
+  colormtx <- rbind(colormtx, "yellow"=c(255, 237, 143))
+  colormtx <- rbind(colormtx, "lightgrey"=c(198, 198, 198))
+  colormtx <- rbind(colormtx, "lightblue"=c(161, 213, 255))
+
+  #   colormtx <- rbind(colormtx, "ashblue"=c(73, 98, 108))
+  # colormtx <- rbind(colormtx, "sapphire"=c(42, 70, 108))
+  # colormtx <- rbind(colormtx, "darkteal"=c(2, 52, 90))
+  # colormtx <- rbind(colormtx, "darkblue2"=c(16, 9, 79))
+  # colormtx <- rbind(colormtx, "darkred2"=c(97, 0, 28))
+  # colormtx <- rbind(colormtx, "ash2"=c(94, 93, 93))
+  # colormtx <- rbind(colormtx, "ashblue2"=c(44, 59, 64))
+  # colormtx <- rbind(colormtx, "sapphire2"=c(20, 44, 107))
+  # colormtx <- rbind(colormtx, "darkteal2"=c(0, 32, 53))
 
   if (is.na(color[1])) { # default, return the palette so drawing functions can cycle through it
     # return(cbind(colormtx/255, alpha))

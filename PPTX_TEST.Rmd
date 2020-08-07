@@ -9,7 +9,8 @@ caim::clr()
 library(caim)
 library(officer)
 library(rvg)
-# library(mschart)
+library(mschart)
+library(data.table)
 ```
 
 # Create pptx document
@@ -20,6 +21,825 @@ pptx <- officer::add_slide(pptx, layout="Title", master="Office Theme")
 pptx <- officer::ph_with(pptx, value="Hey this is my Slide Title", location=ph_location_label("Title"))
 pptx <- officer::ph_with(pptx, value="Guy America, CFA, CIO", location=ph_location_label("Subtitle"))
 
+```
+
+
+#### Format numbers
+```{r}
+pretty_fmt <- function(data, format_string="gen", n=5) {
+  if (format_string %in% c("date", "dt")) {
+    # only process if we have dates
+    if (lubridate::is.Date(data)) {
+      if (max(table(lubridate::year(pretty(data, n)))) == 1) {
+        # if a year has enough granularity for axis
+        return(year(pretty(data, n)))
+      } else if (max(table(paste(lubridate::year(pretty(data, n)), lubridate::quarter(pretty(data, n))))) == 1) {
+        # if yyyy-qq has enough granularity for axis
+        return(paste(lubridate::year(pretty(data, n)), lubridate::quarter(pretty(data, n)), sep="-Q"))
+      } else if (max(table(paste(lubridate::year(pretty(data, n)), lubridate::month(pretty(data, n))))) == 1) {
+        # if yyyy-mm has enough granularity for axis
+        return(paste(lubridate::year(pretty(data, n)), sprintf(lubridate::month(pretty(data, n)), fmt="%02.0f"), sep="-"))
+      } else {
+        # return yyyy-mm-dd
+        return(
+          paste(lubridate::year(pretty(data, n))
+                , sprintf(lubridate::month(pretty(data, n)), fmt="%02.0f")
+                , sprintf(lubridate::day(pretty(data, n)), fmt="%02.0f")
+                , sep="-"))
+      }
+    } else {
+      # not a date, return error
+      return(rep("date_err", length(pretty(data, n))))
+    }
+  } else if (format_string %in% c("pct", "percent")) {
+    done <- F
+    num_digits <- -1
+    while(!done) {
+      num_digits <- num_digits + 1
+      if (max(table(round(pretty(100*range(data, na.rm=T), n), num_digits))) == 1) 
+        done <- T
+    }
+    return(sprintf(round(pretty(100*data, n), num_digits),fmt=paste("%1.", num_digits, "f%%",sep="")))
+  } else if (format_string %in% c("dec", "decimal")) {
+    done <- F
+    num_digits <- -1
+    while(!done) {
+      num_digits <- num_digits + 1
+      if (max(table(round(pretty(range(data, na.rm=T), n), num_digits))) == 1) 
+        done <- T
+    }
+    return(sprintf(round(pretty(data, n), num_digits),fmt=paste("%1.", num_digits, "f",sep="")))
+  } else if (format_string %in% c("gen", "genl", "general")) {
+    return(pretty(data, n))
+  }
+}
+```
+
+#### chart_params function
+```{r}
+chart_params <- function(
+  data
+  , x_fmt="gen", y_fmt="gen"
+  , x_padding=0
+  , x_axis_line=F, y_axis_line=T
+  , x_axis_loc=0, y_axis_loc=0
+  , x_axis_lwd=1, y_axis_lwd=1
+  , x_axis_labels=T, y_axis_labels=T
+  , x_grid=F, y_grid=T
+  , legend=NA
+  , title=NA
+  , subtitle=NA
+  , x_title=NA, y_title=NA
+  , x_rev=F, y_rev=F
+  , x_pretty_n=5, y_pretty_n=5
+  , x_stagger=F
+  , x_bounds=NULL, y_bounds=NULL
+  , bg_color = rgb(231, 231, 231, maxColorValue = 255)
+  , grid_color = rgb(217, 217, 217, maxColorValue = 255)
+  , axis_color = rgb(0, 0, 0, maxColorValue = 255)
+  , text_color = rgb(89, 89, 89, maxColorValue = 255)
+  , title_color = rgb(73, 73, 73, maxColorValue = 255)
+  , font_name = "Arial"
+  , font_size = 11
+  # for bar chart, etc. T or F will override automatic checking if is.character(x)
+  , use_categories = NA
+  , ...
+) {
+  # assemble all parameters and ... into list
+  params <- c(as.list(environment()), list(...))
+
+  # set up font
+  params$font_cex <- params$font_size / 12
+  
+  # set up margins
+  has_title <- !is.na(title) | !is.na(subtitle)
+  title_margin <- ifelse(has_title, 1.25, 0)
+  if (!is.na(title) & !is.na(subtitle))
+    title_margin <- 2.5
+  # outer margin
+  params$oma <- c(
+    # bottom
+    0.5
+    # left
+    , 0.5
+    # top
+    , title_margin
+    # right
+    , 0
+  )
+  # inner margin
+  x_margin <- ifelse(is.na(x_title), 1.6, 2.6)
+  if (x_stagger)
+    x_margin <- x_margin + 1
+  params$mar <- c(
+    # bottom
+    x_margin
+    # left
+    , ifelse(is.na(y_title), 2.6, 3.6)
+    # top
+    , ifelse(has_title, 0.6, 1.1)
+    # right
+    , 1.1
+  )
+  
+  # x should be first column of data
+  x <- data[ , 1]
+  if (is.data.table(x)) 
+    x <- unlist(x)
+  # x_names may be separate from x if using categories
+  x_names <- x
+  # strings in x will enable use of categories
+  if (is.na(use_categories))
+    use_categories <- is.character(x)
+  if (use_categories)
+    x <- seq(1, length(x))
+  if (x_fmt %in% c("dt", "date"))
+    x <- lubridate::as_date(x)
+  # x_names for use when x is not numeric (i.e. categories)
+  # calculate x_range_data
+  x_range_data <- range(x, na.rm=T)
+  if (!is.null(x_bounds))
+    x_range_data <- range(c(x_range_data, x_bounds), na.rm=T)
+  x_min_data <- x_range_data[1]
+  x_max_data <- x_range_data[2]
+  # calculate x_range_plot - incorporates categories or x_padding
+  if (use_categories) {
+    x_min_plot <- x_min_data - 0.5
+    x_max_plot <- x_max_data + 0.5
+  } else {
+    x_min_plot <- x_max_data + (x_min_data - x_max_data) * (1 + x_padding)
+    x_max_plot <- x_min_data + (x_max_data - x_min_data) * (1 + x_padding)
+  }
+  x_range_plot <- range(x_min_plot, x_max_plot, na.rm=T)
+  print(paste("x_min_plot:", x_min_plot, "x_max_plot", x_max_plot))
+  # calculate x_range_chart - incorporates spacing for legeng on right
+  if (is.na(legend))
+    x_range_chart <- x_range_plot
+  else
+    x_range_chart <- c(x_min_plot, x_min_plot + (x_max_plot - x_min_plot) * (1 + legend))
+  x_min_chart <- x_range_chart[1]
+  x_max_chart <- x_range_chart[2]
+  # calculate x_lim and reverse if necessary
+  x_lim <- x_range_chart
+  if (x_rev)
+    x_lim <- rev(x_lim)
+  # assign x parameters to list
+  params$x <- x
+  params$x_names <- x_names
+  params$use_categories <- use_categories
+  params$x_range_data <- x_range_data
+  params$x_min_data <- x_min_data
+  params$x_max_data <- x_max_data
+  params$x_range_plot <- x_range_plot
+  params$x_min_plot <- x_min_plot
+  params$x_max_plot <- x_max_plot
+  params$x_range_chart <- x_range_chart
+  params$x_min_chart <- x_min_chart
+  params$x_max_chart <- x_max_chart
+  params$x_lim <- x_lim
+  
+  # Y data are in the columns excluding the first
+  Y <- as.matrix(data[ , -1])
+  # calculate y_range_data
+  y_range_data <- range(Y, na.rm=T)
+  if (!is.null(y_bounds))
+    y_range_data <- range(c(y_range_data, y_bounds), na.rm=T)
+  y_min_data <- y_range_data[1]
+  y_max_data <- y_range_data[2]
+  # calculate y_range_plot - incorporates possibly wider bounds from pretty
+  y_range_plot <- range(y_range_data, pretty(y_range_data, y_pretty_n), na.rm=T)
+  y_min_plot <- y_range_plot[1]
+  y_max_plot <- y_range_plot[2]
+  # calculate y_lim and reverse if necessary
+  y_lim <- y_range_plot
+  if (y_rev)
+    y_lim <- rev(y_lim)
+  # assign y parameters to list
+  params$Y <- Y
+  params$y_range_data <- y_range_data
+  params$y_min_data <- y_min_data
+  params$y_max_data <- y_max_data
+  params$y_range_plot <- y_range_plot
+  params$y_min_plot <- y_min_plot
+  params$y_max_plot <- y_max_plot
+  params$y_lim <- y_lim
+  
+  # calculate tick locations
+  # x tick locations
+  if (use_categories) {
+    x_at <- x  
+    x_at_labels <- x_names
+  } else {
+    x_at <- pretty(x_range_data, x_pretty_n)
+    x_at_labels <- pretty_fmt(params$x, params$x_fmt, params$x_pretty_n)
+  }
+  print(c("x_at:", x_at))
+  # y tick locations
+  y_at <- pretty(y_range_data, y_pretty_n) # pretty(range(Y))
+  y_at_labels <- pretty_fmt(y_at, params$y_fmt, params$y_pretty_n)
+  print(c("y_at:", y_at))
+  # assign tick locations to list
+  params$x_at <- x_at
+  params$x_at_labels <- x_at_labels
+  params$y_at <- y_at
+  params$y_at_labels <- y_at_labels
+
+  return(params)
+}
+```
+
+#### chart_blank function
+```{r}
+# low_level function, only call from within a chart_line etc. function
+chart_blank <- function(params, ...) {
+  # draw main blank plot
+  plot(
+    params$x_range_chart, params$y_range_plot
+    , xlim=params$x_lim, ylim=params$y_lim
+    , type="n", bty="n", tcl=0, las=1, yaxt="n", xaxt="n", xaxs="i"
+    , xlab=NA, ylab=NA
+    , ...
+  ) 
+  
+  # draw title
+  if (!is.na(params$title))
+    mtext(
+      params$title, side=3, line=ifelse(is.na(params$subtitle), 0, 1.15), adj=0.0, outer=T, font=2 # bold
+      , family=params$font_name
+      , col=params$title_color
+      , cex=params$font_cex
+    )
+  # draw subtitle
+  if (!is.na(params$subtitle))
+    mtext(
+      params$subtitle, side=3, line=0, adj=0.0, outer=T, font=1 # normal, not bold
+      , family=params$font_name
+      , col=params$title_color
+      , cex=params$font_cex
+    )
+  
+  # draw gridlines
+  # vertical gridlines
+  if (params$x_grid) {
+    for (t in params$x_at)
+      lines(c(t, t), c(params$y_min_plot, params$y_max_plot)
+            , col=params$grid_color, lty="solid")
+  }
+  # horizontal gridlines
+  if (params$y_grid) {
+    for (t in params$y_at)
+      lines(c(params$x_min_plot, params$x_max_plot), c(t, t)
+            , col=params$grid_color, lty="solid")
+  }
+  
+  # draw axis lines
+  # vertical x axis line
+  if (params$x_axis_line) {
+    x_loc <- min(max(params$x_min_plot, params$x_axis_loc), params$x_max_plot)
+    lines(c(x_loc, x_loc), c(params$y_min_plot, params$y_max_plot)
+          , col=params$axis_color, lty="solid", lwd=params$x_axis_lwd)
+  }
+  # horizontal y axis line
+  if (params$y_axis_line) {
+    y_loc <- min(max(params$y_min_plot, params$y_axis_loc), params$y_max_plot)
+    lines(c(params$x_min_plot, params$x_max_plot), c(y_loc, y_loc)
+          , col=params$axis_color, lty="solid", lwd=params$y_axis_lwd)
+  }
+
+  # draw tick labels
+  # x tick labels
+  if (params$x_axis_labels) {
+    if (params$x_stagger) {
+      labels <- params$x_at_labels
+      x_ix <- seq(1:length(labels))
+      # odd numbers
+      x_ix_hi <- x_ix[(x_ix %% 2) != 0]
+      # even numbers
+      x_ix_lo <- x_ix[(x_ix %% 2) == 0]
+      # hi labels
+      mtext(labels[x_ix_hi]
+            , side=1, line=0.25, at=params$x_at[x_ix_hi]
+            , col=params$text_color, cex=params$font_cex)
+      # lo labels
+      mtext(labels[x_ix_lo]
+            , side=1, line=1.25, at=params$x_at[x_ix_lo]
+            , col=params$text_color, cex=params$font_cex)
+    } else {
+      mtext(params$x_at_labels
+            , side=1, line=0.25, at=params$x_at
+            , col=params$text_color, cex=params$font_cex)
+    }
+  }
+  # y tick labels
+  if (params$y_axis_labels) {
+    mtext(params$y_at_labels
+          , side=2, las=1, line=0.5, at=params$y_at
+          , col=params$text_color, cex=params$font_cex)
+  }
+  
+  # draw axis titles
+  # x axis
+  if (!is.na(params$x_title))
+    mtext(params$x_title, side=1, line=ifelse(params$x_stagger, 2.5, 1.5)
+          , col=params$text_color, cex=params$font_cex, at=mean(params$x_range_data))
+  # y axis
+  if (!is.na(params$y_title))
+    mtext(params$y_title, side=2, line=2.5
+          , col=params$text_color, cex=params$font_cex)
+  
+}
+```
+
+#### chart_line function
+```{r}
+chart_line <- function(data, lwd=2.5, alpha=1, ...) {
+  
+  # set up chart parameters
+  params <- chart_params(data, lwd=lwd, alpha=alpha, ...) 
+
+  # set up graphics environment
+  # save current graphics settings
+  op <- par(no.readonly = T)
+  # outer margin
+  par(oma=params$oma)
+  # inner margin
+  par(mar=params$mar)
+  # set font scaling
+  par(cex=params$font_cex)
+  # set background color
+  par(bg=params$bg_color)
+
+  # draw blank chart
+  chart_blank(params)  
+
+  # draw lines
+  for (i in 1:ncol(params$Y)) {
+    y <- params$Y[ , i]
+    lines(params$x, y, col=caim::caim_colors(i, params$alpha), lwd=params$lwd)
+    # draw legend text
+    if (!is.na(params$legend))
+      text(params$x_max_plot, y[length(y)], labels=colnames(params$Y)[i], pos=ifelse(params$x_rev, 2, 4)
+           , col=caim::caim_colors(i, params$alpha), cex=params$font_cex)
+  }
+
+  # restore original graphics environment
+  par(op)
+}
+```
+
+
+#### regular line chart
+```{r}
+port_data <- fread("./data/port_data.csv")
+port_data[ , date := lubridate::as_date(date)]
+chart_line(port_data, x_fmt="date", y_axis_line=F, alpha=1, legend=.18, y_title="1990 = 100", x_title = "the years, the years")
+```
+#### Draw broomstick chart
+```{r}
+return_paths <- fread("./data/return_paths.csv")
+
+data <- copy(return_paths)
+# data[ , per := lubridate::as_date(paste(seq(2000, 2012),"12-31", sep="-"))]
+# data[ , per := seq(lubridate::as_date("2020-03-31"), lubridate::as_date("2020-04-12"), 1)]
+# data[ , per := lubridate::as_date(c("2005-12-31", "2006-03-31", "2006-06-30", "2006-09-30", "2006-12-31"
+#                                     , "2007-03-31", "2007-06-30", "2007-09-30", "2007-12-31", "2008-03-31" 
+#                                     , "2008-06-30", "2008-09-30", "2008-12-31"))]
+
+chart_line(data, alpha=.2, lwd=3, x_title="Months", y_title="Annual Return", x_fmt="dec", y_fmt="pct", x_padding=.02, x_rev=F, y_rev=F, x_grid=T, y_grid=T, y_axis_loc=0, y_axis_line=T, title="Return Paths", subtitle="Just when you think you got 'em, you ain't")
+```
+
+#### draw broomstick chart with categories
+```{r}
+data[ , per := c("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve")]
+chart_line(data, alpha=.25, x_title="Months", y_title="Annual Return", y_fmt="pct", x_padding=.01, x_rev=F, y_rev=F, x_grid=T, y_grid=T, x_stagger=T, y_axis_loc=0, y_axis_line=T, title="Return Paths", subtitle="Just when you think you got 'em, you ain't")
+```
+
+#### long to wide
+```{r}
+# maintains column order (does not alphabetize)
+long2wide <- function(data, row, col, val) {
+  selection <- sprintf("%s ~ %s", row, col)
+  row_names <- unique(data[ , ..row])
+  col_names <- unique(unlist(data[ , ..col]))
+  wide <- dcast(data, as.formula(selection), value.var=val)[row_names, on=c(row)]
+  return(cbind(wide[ , ..row], wide[ , ..col_names]))
+}
+
+wide2long <- function(data, row, col, val) {
+  row_names <- unique(data[ , ..row])
+  melt(data, id.vars=row, na.rm=T, variable.name=col, value.name=val)[row_names, on=c(row)]
+}
+
+row2col <- function(data, new_name="row") {
+  make_name <- colnames(data)[1]
+  transpose(data, make.names=make_name, keep.names=new_name)
+}
+```
+
+#### chart_bar function
+```{r}
+chart_bar <- function(data, data_labels=F, gap=.2, ...) {
+  
+  # set up chart parameters
+  params <- chart_params(data, use_categories=T, ...) 
+  print(params)
+
+  # set up graphics environment
+  # save current graphics settings
+  op <- par(no.readonly = T)
+  # outer margin
+  par(oma=params$oma)
+  # inner margin
+  par(mar=params$mar)
+  # set font scaling
+  par(cex=params$font_cex)
+  # set background color
+  par(bg=params$bg_color)
+
+  # draw blank chart
+  chart_blank(params)  
+
+  # draw bars
+  num_series <- ncol(params$Y)
+  data_width <- 1 - gap
+  bar_width <- data_width / num_series
+  for (c in 1:length(params$x)) {
+    min_y <- 0
+    max_y <- 0
+    for (s in 1:num_series) {
+      v <- params$Y[c, s]
+      if (!is.na(v)) {
+        x_lo <- c - (data_width / 2) + (s - 1) * bar_width
+        x_hi <- x_lo + bar_width
+        y_lo <- 0
+        y_hi <- v
+        col_bar <- caim::caim_colors(s)
+        rect(x_lo, y_lo, x_hi, y_hi, col=col_bar, border=NA)
+        if (data_labels) {
+          text((x_lo + x_hi) / 2, y_hi, labels=v, pos=ifelse(v < 0, 1, 3), col=params$text_color)
+        }
+      }
+    }
+  }
+
+  # restore original graphics environment
+  par(op)
+  
+}
+```
+
+#### draw bar chart
+```{r}
+bar_data <- rbindlist(list(
+  data.table(date=character(), BENCH=numeric(), PORT=numeric())
+  , data.table("2005-12-31", .05, .04)
+  , data.table("2006-12-31", .023, .031)
+  , data.table("2007-12-31", .038, .045)
+  , data.table("2008-12-31", -.076, -.043)
+  , data.table("2009-12-31", .012, .014)
+))
+bar_data[ , date:= lubridate::as_date(date)]
+
+chart_bar(bar_data, x_fmt="date", y_fmt="pct", data_labels=T)
+```
+
+#### chart_bar_stack function
+```{r}
+chart_bar_stack <- function(data, data_labels=T, ...) {
+  
+  # get y_bounds from existing data
+  # - can handle < 0 and > 100% from fwds, long/short
+  colnames(data)[1] <- "category"
+  long <- wide2long(data, "category", "series", "val")
+  y_bounds <- range(rbindlist(list(
+    long[val < 0, .(val = sum(val, na.rm=T)), by=.(category)]
+    , long[val >= 0, .(val = sum(val, na.rm=T)), by=.(category)]
+  ))$val, na.rm=T)
+
+  # set up chart parameters
+  params <- chart_params(data, y_bounds=y_bounds, ...) 
+
+  # set up graphics environment
+  # save current graphics settings
+  op <- par(no.readonly = T)
+  # outer margin
+  par(oma=params$oma)
+  # inner margin
+  par(mar=params$mar)
+  # set font scaling
+  par(cex=params$font_cex)
+  # set background color
+  par(bg=params$bg_color)
+
+  # draw blank chart
+  chart_blank(params)  
+
+  # draw bars
+  for (c in 1:length(params$x)) {
+    min_y <- 0
+    max_y <- 0
+    for (s in 1:ncol(params$Y)) {
+      w <- params$Y[c, s]
+      if (!is.na(w)) {
+        x_lo <- c - 0.25
+        x_hi <- c + 0.25
+        if (w < 0) {
+          y_hi <- min_y
+          y_lo <- y_hi + w
+          min_y <- min_y + w
+        } else {
+          y_lo <- max_y
+          y_hi <- y_lo + w
+          max_y <- max_y + w
+        }
+        col_bar <- caim::caim_colors(s)
+        rect(x_lo, y_lo, x_hi, y_hi, col=col_bar, border=NA)
+        if (data_labels) {
+          col_depth <- mean(col2rgb(col_bar))
+          col_alpha <- col2rgb(col_depth, alpha=T)[4, 1]
+          col_text <- ifelse(
+            col_depth > 200 || col_alpha < 215
+            , "darkgrey"
+            , "white"
+          )
+          text((x_lo + x_hi) / 2, (y_lo + y_hi) / 2, colnames(params$Y)[s], col=col_text, adj=0.5)
+        }
+      }
+    }
+  }
+
+  # restore original graphics environment
+  par(op)
+
+}
+```
+
+#### draw stacked bar chart
+```{r}
+port_wts <- rbindlist(list(
+  data.table(name=character(), asset=character(), wt=numeric())
+  , data.table("BENCH", "MXWD", 1)
+  , data.table("PORT", "SPX", 0.48)
+  , data.table("PORT", "MXWOU", 0.41)
+  , data.table("PORT", "MXEF", 0.11)
+  , data.table("PORT", "USD.FWD", .23)
+  , data.table("PORT", "EUR.FWD", -.23)
+  , data.table("OPT", "MXWD", 0.8)
+  , data.table("OPT", "SPX", .13)
+  , data.table("OPT", "MXEF", .07)
+), use.names=F)
+
+port_mtx <- long2wide(port_wts, "name", "asset", "wt")
+range(rbindlist(list(
+  port_wts[wt < 0, .(tot = sum(wt)), by=.(name)]
+, port_wts[wt >= 0, .(tot = sum(wt)), by=.(name)]
+))$tot)
+port_mtx[]
+
+# chart_line(port_mtx, y_bounds=c(-1, 2))
+chart_bar_stack(port_mtx, y_fmt="pct")
+```
+#### chart_scatter_assets function
+```{r}
+# data.table with cols series, x, y
+chart_scatter_assets <- function(data, ...) {
+  col_names <- colnames(data)
+  chart_data <- long2wide(data, col_names[2], col_names[1], col_names[3])
+  
+  # set up chart parameters
+  params <- chart_params(chart_data, ...) 
+
+  # set up graphics environment
+  # save current graphics settings
+  op <- par(no.readonly = T)
+  # outer margin
+  par(oma=params$oma)
+  # inner margin
+  par(mar=params$mar)
+  # set font scaling
+  par(cex=params$font_cex)
+  # set background color
+  par(bg=params$bg_color)
+
+  # draw blank chart
+  chart_blank(params)  
+  
+  # draw points
+  for (a in 1:nrow(data)) {
+    label <- data[a, 1]
+    x <- data[a, 2]
+    y <- data[a, 3]
+    col <- caim::caim_colors(a)
+    x_pos <- ifelse(
+      params$x_rev
+      , (x - params$x_max_plot) / (params$x_min_plot - params$x_max_plot)
+      , (x - params$x_min_plot) / (params$x_max_plot - params$x_min_plot) 
+    )
+    points(x, y, col=col, pch=19)
+    text(x, y, labels=label, col=col, pos=ifelse(x_pos < 0.75, 4, 2))
+  }
+  
+  # restore original graphics environment
+  par(op)
+
+}
+```
+
+#### scatter assets chart
+```{r}
+asset_summary <- rbindlist(list(
+  data.table(name=as.character(), x=as.numeric(), y=as.numeric())
+  , data.table("CASH", 0.0025, .0025)
+  , data.table("BONDS", -.02, .050)
+  , data.table("EQ", -.05, .03)
+), use.names=F)
+
+chart_scatter_assets(asset_summary, x_rev=T, y_axis_line=F, x_axis_line=T, y_fmt="pct", x_fmt="pct", x_padding=.02)
+
+```
+
+#### Curacao slides
+```{r}
+pptx <- officer::add_slide(pptx, layout="Two Content", master="Office Theme")
+pptx <- officer::ph_with(pptx, value="Investment Tranche:\n3-Year Horizon Analysis", location=ph_location_label("Title"))
+pptx <- officer::ph_with(pptx, value="Gold does not provide capital preservation", location=ph_location_label("Subtitle"))
+
+xy_summary <- fread("./data/xy.csv")[ , .(asset=name, x=var, y=mean)]
+chart_r <- dml(chart_scatter_assets(xy_summary, x_rev=T, y_axis_line=F, x_axis_line=T, y_fmt="pct", x_fmt="pct", x_padding=.02, y_title="3-year average cumulative return", x_title="3-year cumulative return VaR95"))
+
+gold_summary <- fread("./data/add_3_stats.csv")[ , .(asset=asset, x=var, y=mean)]
+gold_risk <- gold_summary[ , .(asset, x)]
+chart_l <- dml(chart_bar_stack(gold_summary[ , .(asset, y, x)], data_labels=F, y_title="3-yr Cumulative VaR95, 3-yr Cumulative Return", y_fmt="pct"))
+chart_x <- dml(chart_scatter_assets(gold_summary, x_rev=T, y_axis_line=F, x_axis_line=T, y_fmt="pct", x_fmt="pct", x_padding=.02, y_title="3-year average cumulative return", x_title="3-year cumulative return VaR95"))
+
+pptx <- officer::ph_with(
+  pptx
+  , chart_l
+  , location=ph_location_label("Content L")
+)
+
+pptx <- officer::ph_with(
+  pptx
+  , chart_r
+  , location=ph_location_label("Content R")
+)
+
+```
+
+
+
+#### Broomstick slide
+```{r}
+pptx <- officer::add_slide(pptx, layout="Two Content", master="Office Theme")
+pptx <- officer::ph_with(pptx, value="Equity Returns", location=ph_location_label("Title"))
+pptx <- officer::ph_with(pptx, value="Forward-Looking outcomes should differ from historic ones", location=ph_location_label("Subtitle"))
+
+return_paths <- fread("./data/return_paths.csv")
+
+data <- copy(return_paths)
+# data[ , per := lubridate::as_date(paste(seq(2000, 2012),"12-31", sep="-"))]
+# data[ , per := seq(lubridate::as_date("2020-03-31"), lubridate::as_date("2020-04-12"), 1)]
+# data[ , per := lubridate::as_date(c("2005-12-31", "2006-03-31", "2006-06-30", "2006-09-30", "2006-12-31"
+#                                     , "2007-03-31", "2007-06-30", "2007-09-30", "2007-12-31", "2008-03-31" 
+#                                     , "2008-06-30", "2008-09-30", "2008-12-31"))]
+port_chart_l <- dml(chart_broomstick(data, x_title="Months", y_title="Annual Return", x_fmt="dec", y_fmt="pct", legend=.1, x_padding=.02, x_rev=F, y_rev=F, x_grid=T, y_grid=T, x_axis_line=T, x_axis_loc=data[1, per], y_axis_loc=0, y_axis_line=T, title="Return Paths", subtitle="Just when you think you got 'em, you ain't")) # 
+
+pptx <- officer::ph_with(
+  pptx
+  , port_chart_l
+  , location=ph_location_label("Content L")
+)
+
+data[ , per := lubridate::as_date(c("2018-12-31", "2019-01-31", "2019-02-28", "2019-03-31", "2019-04-30"
+                                    , "2019-05-31", "2019-06-30", "2019-07-31", "2019-08-31", "2019-09-30"
+                                    , "2019-10-31", "2019-11-30", "2019-12-31"))]
+
+port_chart_r <- dml(chart_broomstick(data, x_title="Months", y_title="Annual Return", x_fmt="date", y_fmt="pct", legend=.1, x_padding=.02, x_rev=F, y_rev=T, x_grid=T, y_grid=T, x_axis_line=T, x_axis_loc=data[1, per], y_axis_loc=0, y_axis_line=T, x_pretty_n=3, y_pretty_n=3, y_bounds=c(-.05, .05))) # 
+
+pptx <- officer::ph_with(
+  pptx
+  , port_chart_r
+  , location=ph_location_label("Content R")
+)
+
+port_chart_big <- dml(chart_broomstick(data, x_title="Months", y_title="Annual Return", x_fmt="date", y_fmt="pct", legend=.1, x_padding=.02, x_rev=F, y_rev=T, x_grid=T, y_grid=T, x_axis_line=T, x_axis_loc=data[1, per], y_axis_loc=0, y_axis_line=T, title="Return Paths", subtitle="Just when you think you got 'em, you ain't")) # 
+
+pptx <- officer::add_slide(pptx, layout="One Chart", master="Office Theme")
+pptx <- officer::ph_with(pptx, value="Big Chart for me", location=ph_location_label("Title"))
+pptx <- officer::ph_with(pptx, value="I wonder if the fonts size up consistently", location=ph_location_label("Subtitle"))
+pptx <- officer::ph_with(
+  pptx
+  , port_chart_big
+  , location=ph_location_label("Chart Placeholder 2")
+)
+
+
+chart_broomstick(data, x_title="Months", y_title="Annual Return", x_fmt="date", y_fmt="pct", legend=.1, x_padding=.02, x_rev=F, y_rev=F, x_grid=T, y_grid=T, x_axis_line=T, x_axis_loc=data[1, per], y_axis_loc=0, y_axis_line=T, title="Return Paths", subtitle="Just when you think you got 'em, you ain't", x_pretty_n=5)
+```
+# D3 test
+```{r}
+library(r2d3)
+dml(r2d3(data=c(.3, .6, .8, .95, .4, .2), script="d3test.js"))
+```
+
+
+
+
+#### slide with bullet points - DEPRECATE
+```{r}
+pptx <- officer::add_slide(pptx, layout="Two Content", master="Office Theme")
+pptx <- officer::ph_with(pptx, value="Equity Returns", location=ph_location_label("Title"))
+pptx <- officer::ph_with(pptx, value="Forward-Looking outcomes should differ from historic ones", location=ph_location_label("Subtitle"))
+pptx <- officer::ph_with(
+  pptx
+  , value=officer::unordered_list(
+    c("I got sumpin to say", "US tended to outperform others in the past", "But world should do catchy", "Level 2 is the place where i go", "yapers", "noop")
+    , level_list = c(1, 2, 2, 1, 2, 3)
+    )
+  , location=ph_location_label("Content L")
+)
+```
+
+#### test R base charts
+```{r}
+pptx <- officer::add_slide(pptx, layout="Two Content", master="Office Theme")
+pptx <- officer::ph_with(pptx, value="Equity Returns", location=ph_location_label("Title"))
+pptx <- officer::ph_with(pptx, value="Forward-Looking outcomes should differ from historic ones", location=ph_location_label("Subtitle"))
+
+plot_hist <- function(num=100) {
+  hist(rnorm(num))
+} 
+
+plot_scatter <- function(num=100) {
+  plot(x=rnorm(num), y=rnorm(num))
+}
+
+plot_d3 <- function() {
+  r2d3(data=c(.3, .6, .8, .95, .4, .2), script="d3test.js")
+}
+
+plot_hist()
+plot_d3()
+
+port_chart_l <- dml(plot_hist(50), fonts=list(sans="Arial"))
+port_chart_r <- dml(plot_scatter(123), fonts=list(sans="Arial"))
+# port_chart_r <- dml(r2d3(data=c(.3, .6, .8, .95, .4, .2), script="d3test.js"))
+pptx <- officer::ph_with(
+  pptx
+  , port_chart_l
+  , location=ph_location_label("Content L")
+)
+
+pptx <- officer::ph_with(
+  pptx
+  , port_chart_r
+  , location=ph_location_label("Content R")
+)
+```
+
+#### mschart charts
+```{r}
+pptx <- officer::add_slide(pptx, layout="Two Content", master="Office Theme")
+pptx <- officer::ph_with(pptx, value="Bar Charts", location=ph_location_label("Title"))
+pptx <- officer::ph_with(pptx, value="You like left? Or right?", location=ph_location_label("Subtitle"))
+
+chart_l <- mschart::ms_barchart(port_wts, "asset", "wt", group="name")
+chart_l <- mschart::as_bar_stack(chart_l)
+mschart::chart_labels(chart_l, title="Tayatal", xlab="xlab", ylab="yayee")
+pptx <- officer::ph_with(pptx, chart_l, location=ph_location_label("Content L"))
+
+chart_r <- mschart::ms_barchart(port_wts, "name", "wt", group="asset")
+chart_r <- mschart::as_bar_stack(chart_r)
+chart_r <- mschart::chart_data_labels(chart_r, num_fmt="General", position="ctr", show_legend_key = F, show_val=F, show_cat_name=F, show_serie_name=T, show_percent = F, separator="-")
+asset_names <- unique(port_wts$asset)
+chart_r <- mschart::chart_labels(chart_r, title=NULL, xlab="ma ma x", ylab="pricentage of watern")
+chart_labels_text_settings <- list(
+  officer::fp_text(font.size=11, color=caim::caim_colors("lightash"))
+  , officer::fp_text(font.size=11, color=caim::caim_colors("lightash"))
+  , officer::fp_text(font.size=11, color=caim::caim_colors("lightash"))
+  , officer::fp_text(font.size=11, color=caim::caim_colors("lightash"))
+)
+names(chart_labels_text_settings) <- asset_names
+chart_r <- mschart::chart_labels_text(chart_r, chart_labels_text_settings)
+colors <- caim::caim_colors(1:length(asset_names))
+names(colors) <- asset_names
+chart_r <- mschart::chart_data_fill(chart_r, colors)
+chart_r <- mschart::chart_ax_y(chart_r, limit_min=0, limit_max=1, major_tick_mark="none", minor_tick_mark="none", num_fmt="0%%")
+chart_r <- mschart::chart_ax_x(chart_r, major_tick_mark="none", minor_tick_mark="none")
+chart_theme <- mschart::mschart_theme(
+  axis_title = officer::fp_text(color=caim::caim_colors("darkred"), font.size=11, bold=F)
+  , grid_major_line = officer::fp_border(color=caim_colors("lightash"), style="solid")
+  , axis_text = officer::fp_text(color=caim::caim_colors("darkblue"), font.size=11, bold=F)
+  , axis_ticks_y = officer::fp_border(color=caim::caim_colors("darkred"), width=1)
+  , axis_ticks_x = officer::fp_border(color=caim::caim_colors("lightash"), width=1)
+  , legend_position = "n"
+)
+chart_r <- mschart::set_theme(chart_r, chart_theme)
+pptx <- officer::ph_with(pptx, chart_r, location=ph_location_label("Content R"), bg=caim::caim_colors("lightash"))
+```
+
+#### Final slides
+```{r}
 pptx <- officer::add_slide(pptx, layout="Content", master="Office Theme")
 pptx <- officer::ph_with(pptx, value="Toto Analysis", location=ph_location_label("Title"))
 pptx <- officer::ph_with(pptx, value="Cheap Assets Suggest Longer Living", location=ph_location_label("Subtitle"))
@@ -38,73 +858,19 @@ pptx <- officer::ph_with(
     )
   , location=ph_location_label("Content")
 )
-```
-
-# D3 test
-```{r}
-library(r2d3)
-dml(r2d3(data=c(.3, .6, .8, .95, .4, .2), script="d3test.js"))
-```
-
-
-```{r}
-
-pptx <- officer::add_slide(pptx, layout="Two Content", master="Office Theme")
-pptx <- officer::ph_with(pptx, value="Equity Returns", location=ph_location_label("Title"))
-pptx <- officer::ph_with(pptx, value="Forward-Looking outcomes should differ from historic ones", location=ph_location_label("Subtitle"))
-pptx <- officer::ph_with(
-  pptx
-  , value=officer::unordered_list(
-    c("I got sumpin to say", "US tended to outperform others in the past", "But world should do catchy", "Level 2 is the place where i go", "yapers", "noop")
-    , level_list = c(1, 2, 2, 1, 2, 3)
-    )
-  , location=ph_location_label("Content L")
-)
-
-port_wts <- rbindlist(list(
-  data.table(name="BENCH", MXWD=1, SPX=0, MXWOU=0, MXEF=0)
-  , data.table(name="PORT", MXWD=0, SPX=0.48, MXWOU=0.41, MXEF=.11)
-))
-
-port_wts <- rbindlist(list(
-  data.table(name=character(), asset=character(), wt=numeric())
-  , data.table("BENCH", "MXWD", 1)
-  , data.table("PORT", "SPX", 0.48)
-  , data.table("PORT", "MXWOU", 0.41)
-  , data.table("PORT", "MXEF", 0.11)
-), use.names=F)
-
-plot_hist <- function(num=100) {
-  hist(rnorm(num))
-} 
-
-plot_d3 <- function() {
-  r2d3(data=c(.3, .6, .8, .95, .4, .2), script="d3test.js")
-}
-
-plot_hist()
-plot_d3()
-
-port_chart_l <- dml(plot_hist(50), fonts=list(sans="Arial"))
-port_chart_r <- dml(r2d3(data=c(.3, .6, .8, .95, .4, .2), script="d3test.js"))
-pptx <- officer::ph_with(
-  pptx
-  , port_chart_l
-  , location=ph_location_label("Content L")
-)
-
-pptx <- officer::ph_with(
-  pptx
-  , port_chart_r
-  , location=ph_location_label("Content R")
-)
 
 pptx <- officer::add_slide(pptx, layout="Disclaimer", master="Office Theme")
 
 pptx <- officer::add_slide(pptx, layout="End", master="Office Theme")
+```
 
+#### Write to pptx
+```{r}
 print(pptx, target="test.pptx")
+```
 
+
+```{r}
 # officer::layout_summary(pptx)
 ```
 

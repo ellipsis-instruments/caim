@@ -56,7 +56,6 @@ g7_rates_data <- g7_rates_info[
   , .SD, key=.(country, class, maturity, date)
 ]
 
-
 g7_curve_mats <- sort(unique(g7_rates_data$maturity))
 g7_curve_columns <- paste0("yield_", g7_curve_mats)
 

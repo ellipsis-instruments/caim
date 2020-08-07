@@ -1,7 +1,7 @@
 Package: caim
 Type: Package
 Title: CAIM Quantitative Toolbox
-Version: 0.1.6
+Version: 0.1.6.1
 Author: Roberts Grava
 Maintainer: Roberts Grava <roberts.grava@caiml.com>
 Description: Financial and quantitative tools and utilities
@@ -10,6 +10,7 @@ Encoding: UTF-8
 LazyData: true
 Depends:
 	data.table
+	, lpSolveAPI
 	, lubridate
 	, officer
 	, magrittr
